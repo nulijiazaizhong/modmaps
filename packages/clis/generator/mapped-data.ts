@@ -16,6 +16,7 @@ import type {
   Ferry,
   MapArea,
   MapData,
+  MileageTarget,
   Model,
   ModelDescription,
   Node,
@@ -44,6 +45,7 @@ const MapDataKeys: Record<keyof MapData, void> = {
   dividers: undefined,
   ferries: undefined,
   mapAreas: undefined,
+  mileageTargets: undefined,
   modelDescriptions: undefined,
   models: undefined,
   nodes: undefined,
@@ -63,14 +65,15 @@ const mapJsonFiles = Object.freeze(Object.keys(MapDataKeys));
 // Transforms MapData (a type containing all array properties) into a type with
 // all Map<string, ...> properties, _except_ for `pois` and `elevation` (which
 // are left alone as arrays).
-export type MappedData = Omit<
+export type MappedData<T extends 'usa' | 'europe' = 'usa' | 'europe'> = Omit<
   {
-    [K in keyof MapData]: Map<string, MapData[K][0]>;
+    [K in keyof MapData]: ReadonlyMap<string, MapData[K][0]>;
   },
   'pois' | 'elevation'
 > & {
-  pois: MapData['pois'];
-  elevation: MapData['elevation'];
+  map: T;
+  pois: Readonly<MapData['pois']>;
+  elevation: Readonly<MapData['elevation']>;
 };
 
 export type FocusOptions = { radiusMeters: number } & (
@@ -89,11 +92,11 @@ interface Options {
   focus?: FocusOptions;
 }
 
-export function readMapData(
+export function readMapData<T extends 'usa' | 'europe'>(
   inputDir: string,
-  map: 'usa' | 'europe',
+  map: T,
   options: Options,
-): MappedData {
+): MappedData<T> {
   checkJsonFilesPresent(inputDir, map);
   const toJsonFilePath = (fn: string) => path.join(inputDir, map + '-' + fn);
   const { includeHidden, focus: focusOptions } = options;
@@ -226,6 +229,9 @@ export function readMapData(
   const cutscenes = readArrayFile<Cutscene>(toJsonFilePath('cutscenes.json'));
   const triggers = readArrayFile<Trigger>(toJsonFilePath('triggers.json'));
   const routes = readArrayFile<WithToken<Route>>(toJsonFilePath('routes.json'));
+  const mileageTargets = readArrayFile<WithToken<MileageTarget>>(
+    toJsonFilePath('mileageTargets.json'),
+  );
 
   const mapped = {
     nodes: nodesMap,
@@ -247,6 +253,7 @@ export function readMapData(
     roadLooks: mapify(roadLooks, r => r.token),
     prefabDescriptions: mapify(prefabDescriptions, p => p.token),
     modelDescriptions: mapify(modelDescriptions, p => p.token),
+    mileageTargets: mapify(mileageTargets, t => t.token),
     pois,
     elevation,
   };
@@ -258,7 +265,7 @@ export function readMapData(
       logger.info(mapOrArray.size, k);
     }
   }
-  return mapped;
+  return { ...mapped, map };
 }
 
 function mapify<T>(arr: T[], k: (t: T) => string): Map<string, T> {

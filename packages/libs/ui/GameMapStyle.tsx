@@ -892,7 +892,7 @@ const roadLineWidth: DataDrivenPropertyValueSpecification<number> = [
 
 // Road types to [line, case] colors
 type RoadColors = Record<RoadType, [string, string]>;
-const roadColors: { [k in Mode]: RoadColors } = {
+const roadColors: Record<Mode, RoadColors> = {
   light: {
     freeway: ['#fde293', '#f8c248'],
     divided: ['#ffffff', '#dddddd'],
@@ -913,7 +913,7 @@ const roadColors: { [k in Mode]: RoadColors } = {
   },
 };
 
-const mapColors: { [k in Mode]: Record<MapAreaColor, string> } = {
+const mapColors: Record<Mode, Record<MapAreaColor, string>> = {
   light: {
     [0]: 'hsl(200, 8%, 92%)', // road
     [1]: 'hsl(38, 59%, 76%)', // light
@@ -959,7 +959,7 @@ const roadCaseColor = (mode: 'light' | 'dark'): ExpressionSpecification => [
   'match',
   ['get', 'roadType'],
   ...(Object.entries(roadColors[mode]).flatMap(
-    ([roadType, [_, casingColor]]) => [roadType, casingColor],
+    ([roadType, [, casingColor]]) => [roadType, casingColor],
   ) as Array7<string>),
   '#b0b', // fallback
 ];

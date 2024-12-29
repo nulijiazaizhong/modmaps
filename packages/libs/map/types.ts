@@ -49,13 +49,16 @@ export type Country = Readonly<{
   code: string;
   truckSpeedLimits: SpeedLimits;
 }>;
-export type SpeedLimits = Partial<{
-  [k in LaneSpeedClass]: {
-    limit: number;
-    urbanLimit: number;
-    maxLimit: number;
-  };
-}>;
+export type SpeedLimits = Partial<
+  Record<
+    LaneSpeedClass,
+    {
+      limit: number;
+      urbanLimit: number;
+      maxLimit: number;
+    }
+  >
+>;
 
 export type LaneSpeedClass =
   | 'localRoad'
@@ -77,6 +80,7 @@ export type FerryConnection = Readonly<{
   token: string;
   name: string;
   nameLocalized: string | undefined;
+  nodeUid: bigint;
   x: number;
   y: number;
   price: number;
@@ -94,9 +98,22 @@ export type Ferry = Readonly<{
   train: boolean;
   name: string;
   nameLocalized: string | undefined;
+  nodeUid: bigint;
   x: number;
   y: number;
   connections: FerryConnection[];
+}>;
+
+export type MileageTarget = Readonly<{
+  token: string;
+  editorName: string;
+  defaultName: string;
+  nameVariants: string[];
+  distanceOffset: number;
+  nodeUid?: bigint;
+  x?: number; // easting
+  y?: number; // southing
+  searchRadius?: number;
 }>;
 
 type BasePoi = Readonly<{
@@ -444,6 +461,28 @@ export type PolygonMapPoint = BaseMapPoint & {
   roadOver: boolean;
 };
 export type MapPoint = RoadMapPoint | PolygonMapPoint;
+interface NavCurve {
+  // From https://modding.scssoft.com/wiki/Games/ETS2/Modding_guides/1.30#Prefabs:
+  // Index of a navigational node which should be used if navigation starts from that AI curve or 0xffffffff if there is none.
+  // Basically it is a reverse mapping to the curve_indices from nodes.
+  navNodeIndex: number;
+  start: {
+    x: number;
+    y: number;
+    z: number;
+    rotation: number;
+    rotationQuat: [number, number, number, number];
+  };
+  end: {
+    x: number;
+    y: number;
+    z: number;
+    rotation: number;
+    rotationQuat: [number, number, number, number];
+  };
+  nextLines: number[];
+  prevLines: number[];
+}
 export interface PrefabDescription {
   // prefab's entry/exit points
   nodes: {
@@ -468,28 +507,7 @@ export interface PrefabDescription {
     y: number;
     action: string;
   }[];
-  navCurves: {
-    // From https://modding.scssoft.com/wiki/Games/ETS2/Modding_guides/1.30#Prefabs:
-    // Index of a navigational node which should be used if navigation starts from that AI curve or 0xffffffff if there is none.
-    // Basically it is a reverse mapping to the curve_indices from nodes.
-    navNodeIndex: number;
-    start: {
-      x: number;
-      y: number;
-      z: number;
-      rotation: number;
-      rotationQuat: [number, number, number, number];
-    };
-    end: {
-      x: number;
-      y: number;
-      z: number;
-      rotation: number;
-      rotationQuat: [number, number, number, number];
-    };
-    nextLines: number[];
-    prevLines: number[];
-  }[];
+  navCurves: NavCurve[];
   navNodes: {
     type: 'physical' | 'ai';
     // if type is physical: the index of the normal node (see nodes array) this navNode ends at.
@@ -536,12 +554,16 @@ export interface DefData {
   modelDescriptions: WithToken<ModelDescription>[];
   achievements: WithToken<Achievement>[];
   routes: WithToken<Route>[];
+  mileageTargets: MileageTarget[];
 }
 
 // GeoJSON
 
 export type DebugFeature = GeoJSON.Feature<
-  GeoJSON.Polygon | GeoJSON.LineString | GeoJSON.Point,
+  | GeoJSON.Polygon
+  | GeoJSON.LineString
+  | GeoJSON.MultiLineString
+  | GeoJSON.Point,
   DebugProperties
 >;
 
@@ -705,6 +727,9 @@ export interface Neighbor {
   readonly distance: number;
   /** True if this Neighbor's edge represents a one-lane road. */
   readonly isOneLaneRoad?: true;
+  /** True if this Neighbor's edge represents a ferry route. */
+  // TODO combine this with isOneLaneRoad into an enum
+  readonly isFerry?: true;
   /**
    * The direction one must travel in _after_ reaching this Neighbor's node.
    * Not the direction of this Neighbor's edge.

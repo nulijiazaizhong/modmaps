@@ -25,11 +25,9 @@ interface Point {
   dlcGuard: number;
 }
 
-export function convertToAchievementsGeoJson(
-  map: 'usa' | 'europe',
-  tsMapData: MappedData,
-) {
+export function convertToAchievementsGeoJson(tsMapData: MappedData) {
   const {
+    map,
     nodes,
     achievements,
     prefabs,
@@ -42,19 +40,8 @@ export function convertToAchievementsGeoJson(
     pois,
     routes,
     trajectories,
-  } = tsMapData;
-  const dlcGuardQuadTree = normalizeDlcGuards(
-    tsMapData.roads,
-    prefabs,
-    tsMapData.mapAreas,
-    triggers,
-    cutscenes,
-    pois,
-    {
-      map,
-      nodes,
-    },
-  );
+    dlcGuardQuadTree,
+  } = normalizeDlcGuards(tsMapData);
   const getDlcGuard = ({ x, y }: { x: number; y: number }): number => {
     if (!dlcGuardQuadTree) {
       // dlc guards unsupported for current map.
