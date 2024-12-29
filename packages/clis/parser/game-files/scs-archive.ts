@@ -8,6 +8,7 @@ import zlib from 'zlib';
 import { logger } from '../logger';
 import { DdsHeader } from './dds-parser';
 import { MappedNumber, uint64le } from './restructure-helpers';
+
 const require = createRequire(import.meta.url);
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-call
@@ -20,7 +21,32 @@ const { gdeflate } = require('bindings')('gdeflate') as {
   gdeflate: (inBuffer: ArrayBuffer, outBuffer: ArrayBuffer) => number;
 };
 
-const FileHeader = new r.Struct({
+const Version = new r.Struct({
+  magic: new r.String(4),
+  version: r.int16le,
+});
+
+const FileHeaderV1 = new r.Struct({
+  magic: new r.String(4),
+  version: r.int16le,
+  salt: r.int16le,
+  hashMethod: new r.String(4),
+  numEntries: r.int32le,
+  entriesOffset: r.int32le,
+});
+
+const EntryHeaderV1 = new r.Struct({
+  hash: uint64le,
+  // offset within the archive file at which the file for this entry's data starts.
+  offset: uint64le,
+  // bitfields can be referenced as entry.flags.isDirectory and entry.flags.isCompressed
+  flags: new r.Bitfield(r.uint32le, ['isDirectory', 'isCompressed']),
+  crc: r.uint32le,
+  size: r.uint32le,
+  compressedSize: r.uint32le,
+});
+
+const FileHeaderV2 = new r.Struct({
   magic: new r.String(4),
   version: r.int16le,
   salt: r.int16le,
@@ -35,7 +61,7 @@ const FileHeader = new r.Struct({
   hashfsV2Platform: r.uint8,
 });
 
-const EntryHeader = new r.Struct({
+const EntryV2Header = new r.Struct({
   hash: uint64le,
   metadataIndex: r.uint32le,
   metadataCount: r.uint16le,
@@ -140,15 +166,133 @@ export interface Entries {
 
 export class ScsArchive {
   private readonly fd: number;
+  private readonly path: string;
+  private readonly fileType;
+
+  constructor(readonly filePath: string) {
+    this.fd = fs.openSync(filePath, 'r');
+    this.path = filePath;
+
+    const buffer = Buffer.alloc(Version.size());
+    fs.readSync(this.fd, buffer, { length: buffer.length });
+    this.fileType = Version.fromBuffer(buffer);
+  }
+
+  scsFile(): ScsArchiveV1 | ScsArchiveV2 | undefined {
+    if (this.fileType.magic === 'SCS#' && this.fileType.version === 1) {
+      return new ScsArchiveV1(this.fd, this.path);
+    } else if (this.fileType.magic === 'SCS#' && this.fileType.version === 2) {
+      return new ScsArchiveV2(this.fd, this.path);
+    }
+    return undefined;
+  }
+
+  dispose() {
+    fs.closeSync(this.fd);
+  }
+}
+
+export class ScsArchiveV1 {
+  private readonly fd: number;
+  public readonly path: string;
   private readonly header;
   private entries: Entries | undefined;
 
-  constructor(readonly path: string) {
-    this.fd = fs.openSync(path, 'r');
+  constructor(
+    readonly file: number,
+    path: string,
+  ) {
+    this.fd = file;
+    this.path = path;
 
-    const buffer = Buffer.alloc(FileHeader.size());
+    const buffer = Buffer.alloc(FileHeaderV1.size());
     fs.readSync(this.fd, buffer, { length: buffer.length });
-    this.header = FileHeader.fromBuffer(buffer);
+    this.header = FileHeaderV1.fromBuffer(buffer);
+  }
+
+  dispose() {
+    fs.closeSync(this.fd);
+  }
+
+  isValid(): boolean {
+    return (
+      this.header.magic === 'SCS#' &&
+      this.header.hashMethod === 'CITY' &&
+      this.header.version === 1
+    );
+  }
+
+  parseEntries(): Entries {
+    Preconditions.checkState(this.isValid());
+    if (this.entries) {
+      return this.entries;
+    }
+
+    const entryHeaders = new r.Array(
+      EntryHeaderV1,
+      this.header.numEntries,
+    ).fromBuffer(
+      this.readData({
+        offset: this.header.entriesOffset,
+        size: EntryHeaderV1.size() * this.header.numEntries,
+      }),
+    );
+
+    const directories: DirectoryEntry[] = [];
+    const files: FileEntry[] = [];
+    for (const header of entryHeaders) {
+      const entry = createEntryV1(this.fd, {
+        hash: header.hash,
+        offset: header.offset,
+        size: header.compressedSize,
+        isDirectory: header.flags.isDirectory,
+        isDataCompressed: header.flags.isCompressed,
+      });
+      if (entry.type === 'directory') {
+        directories.push(entry);
+      } else {
+        files.push(entry);
+      }
+    }
+    this.entries = {
+      directories: createStore(directories),
+      files: createStore(files),
+    };
+    return this.entries;
+  }
+
+  private readData({
+    offset, //
+    size, //
+  }: {
+    offset: number;
+    size: number;
+  }): Buffer {
+    const buffer = Buffer.alloc(size);
+    fs.readSync(this.fd, buffer, {
+      length: buffer.length,
+      position: offset,
+    });
+    return buffer;
+  }
+}
+
+export class ScsArchiveV2 {
+  private readonly fd: number;
+  public readonly path: string;
+  private readonly header;
+  private entries: Entries | undefined;
+
+  constructor(
+    readonly file: number,
+    path: string,
+  ) {
+    this.fd = file;
+    this.path = path;
+
+    const buffer = Buffer.alloc(FileHeaderV2.size());
+    fs.readSync(this.fd, buffer, { length: buffer.length });
+    this.header = FileHeaderV2.fromBuffer(buffer);
   }
 
   dispose() {
@@ -170,13 +314,13 @@ export class ScsArchive {
     }
 
     const entryHeaders = new r.Array(
-      EntryHeader,
+      EntryV2Header,
       this.header.entryTableCount,
     ).fromBuffer(
       this.readData({
         offset: this.header.entryTableOffset,
         compressedSize: this.header.entryTableCompressedSize,
-        uncompressedSize: EntryHeader.size() * this.header.entryTableCount,
+        uncompressedSize: EntryV2Header.size() * this.header.entryTableCount,
       }),
     );
     const metadataMap = this.createMetadataMap(entryHeaders);
@@ -184,7 +328,7 @@ export class ScsArchive {
     const directories: DirectoryEntry[] = [];
     const files: FileEntry[] = [];
     for (const header of entryHeaders) {
-      const entry = createEntry(this.fd, header, metadataMap);
+      const entry = createEntryV2(this.fd, header, metadataMap);
       if (entry.type === 'directory') {
         directories.push(entry);
       } else {
@@ -199,7 +343,7 @@ export class ScsArchive {
   }
 
   private createMetadataMap(
-    entryHeaders: BaseOf<typeof EntryHeader>[],
+    entryHeaders: BaseOf<typeof EntryV2Header>[],
   ): Map<number, MetadataEntry> {
     const metadataMap = new Map<number, MetadataEntry>();
 
@@ -290,7 +434,24 @@ function createStore<V extends { hash: bigint }>(values: V[]) {
   };
 }
 
-interface EntryMetadata {
+interface EntryV1Metadata {
+  hash: bigint;
+  offset: bigint;
+  size: number;
+  isDirectory: boolean;
+  isDataCompressed: boolean;
+}
+
+function createEntryV1(
+  fd: number,
+  metadata: EntryV1Metadata,
+): DirectoryEntry | FileEntry {
+  return metadata.isDirectory
+    ? new ScsArchiveDirectoryV1(fd, metadata)
+    : new ScsArchiveFileV1(fd, metadata);
+}
+
+interface EntryV2Metadata {
   hash: bigint;
   offset: bigint;
   compressedSize: number;
@@ -299,9 +460,9 @@ interface EntryMetadata {
   isDirectory: boolean;
 }
 
-function createEntry(
+function createEntryV2(
   fd: number,
-  header: BaseOf<typeof EntryHeader>,
+  header: BaseOf<typeof EntryV2Header>,
   metadataMap: Map<number, MetadataEntry>,
 ): DirectoryEntry | FileEntry {
   if (header.metadataCount === 3) {
@@ -332,13 +493,13 @@ function createEntry(
   };
 
   return metadata.isDirectory
-    ? new ScsArchiveDirectory(fd, metadata)
-    : new ScsArchiveFile(fd, metadata);
+    ? new ScsArchiveDirectoryV2(fd, metadata)
+    : new ScsArchiveFileV2(fd, metadata);
 }
 
 function createTobjEntry(
   fd: number,
-  header: BaseOf<typeof EntryHeader>,
+  header: BaseOf<typeof EntryV2Header>,
   metadataMap: Map<number, MetadataEntry>,
 ): FileEntry {
   Preconditions.checkArgument(
@@ -396,12 +557,73 @@ const TileStreamHeader = new r.Struct({
   lastTileSize: r.uint32le,
 });
 
-abstract class ScsArchiveEntry {
+abstract class ScsArchiveEntryV1 {
   abstract type: string;
 
   protected constructor(
     protected readonly fd: number,
-    protected readonly metadata: EntryMetadata,
+    protected readonly metadata: EntryV1Metadata,
+  ) {}
+
+  get hash(): bigint {
+    return this.metadata.hash;
+  }
+
+  read() {
+    const rawData = Buffer.alloc(this.metadata.size);
+    fs.readSync(this.fd, rawData, {
+      length: rawData.length,
+      position: this.metadata.offset,
+    });
+    if (!this.metadata.isDataCompressed) {
+      return rawData;
+    }
+    return zlib.inflateSync(rawData);
+  }
+}
+
+class ScsArchiveFileV1 extends ScsArchiveEntryV1 implements FileEntry {
+  readonly type = 'file';
+
+  constructor(fd: number, metadata: EntryV1Metadata) {
+    super(fd, metadata);
+  }
+}
+
+class ScsArchiveDirectoryV1
+  extends ScsArchiveEntryV1
+  implements DirectoryEntry
+{
+  readonly type = 'directory';
+  readonly subdirectories: readonly string[];
+  readonly files: readonly string[];
+
+  constructor(fd: number, metadata: EntryV1Metadata) {
+    super(fd, metadata);
+
+    const subdirectories: string[] = [];
+    const files: string[] = [];
+    for (const str of this.read().toString().split('\n')) {
+      if (str === '') {
+        continue;
+      }
+      if (str.startsWith('*')) {
+        subdirectories.push(str.substring(1));
+      } else {
+        files.push(str);
+      }
+    }
+    this.subdirectories = subdirectories;
+    this.files = files;
+  }
+}
+
+abstract class ScsArchiveEntryV2 {
+  abstract type: string;
+
+  protected constructor(
+    protected readonly fd: number,
+    protected readonly metadata: EntryV2Metadata,
   ) {}
 
   get hash(): bigint {
@@ -441,18 +663,18 @@ abstract class ScsArchiveEntry {
   }
 }
 
-class ScsArchiveFile extends ScsArchiveEntry implements FileEntry {
+class ScsArchiveFileV2 extends ScsArchiveEntryV2 implements FileEntry {
   readonly type = 'file';
 
-  constructor(fd: number, metadata: EntryMetadata) {
+  constructor(fd: number, metadata: EntryV2Metadata) {
     super(fd, metadata);
   }
 }
 
-class ScsArchiveTobjFile extends ScsArchiveFile {
+class ScsArchiveTobjFile extends ScsArchiveFileV2 {
   constructor(
     fd: number,
-    metadata: EntryMetadata,
+    metadata: EntryV2Metadata,
     private readonly imageMetadata: BaseOf<typeof ImageMeta>,
   ) {
     super(fd, metadata);
@@ -549,12 +771,15 @@ function closestPowerOf2(n: number): number {
   return Math.pow(2, lg);
 }
 
-class ScsArchiveDirectory extends ScsArchiveEntry implements DirectoryEntry {
+class ScsArchiveDirectoryV2
+  extends ScsArchiveEntryV2
+  implements DirectoryEntry
+{
   readonly type = 'directory';
   readonly subdirectories: readonly string[];
   readonly files: readonly string[];
 
-  constructor(fd: number, metadata: EntryMetadata) {
+  constructor(fd: number, metadata: EntryV2Metadata) {
     super(fd, metadata);
 
     const reader = new r.DecodeStream(this.read());

@@ -79,7 +79,10 @@ export function parseMapFiles(
     })
     .map(p => {
       logger.log('adding', path.basename(p));
-      return new ScsArchive(p);
+      return new ScsArchive(p).scsFile();
+    })
+    .filter(p => {
+      return p !== undefined;
     });
   const entries = new CombinedEntries(archives);
   try {

@@ -27,3 +27,4 @@ europe-prefabDescriptions.json
 npm-debug.log*
 tsconfig.tsbuildinfo
 .eslintcache
+/data/

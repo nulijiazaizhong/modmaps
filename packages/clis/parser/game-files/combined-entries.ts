@@ -4,15 +4,16 @@ import type {
   DirectoryEntry,
   Entries,
   FileEntry,
-  ScsArchive,
+  ScsArchiveV1,
+  ScsArchiveV2,
   Store,
 } from './scs-archive';
 
 export class CombinedEntries implements Entries {
-  private readonly archives: readonly ScsArchive[];
+  private readonly archives: readonly (ScsArchiveV1 | ScsArchiveV2)[];
 
-  constructor(archives: ScsArchive[]) {
-    const valid: ScsArchive[] = [];
+  constructor(archives: (ScsArchiveV1 | ScsArchiveV2)[]) {
+    const valid: (ScsArchiveV1 | ScsArchiveV2)[] = [];
     for (const archive of archives) {
       if (!archive.isValid()) {
         logger.warn(`${archive.path} is invalid. ignoring.`);
