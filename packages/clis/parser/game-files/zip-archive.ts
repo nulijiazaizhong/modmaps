@@ -16,6 +16,10 @@ export class ZipArchive {
     this.path = path;
   }
 
+  isValid(): boolean {
+    return true;
+  }
+
   parseEntries(): Entries {
     if (this.entries) {
       return this.entries;

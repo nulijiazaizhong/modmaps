@@ -8,6 +8,7 @@ import * as process from 'process';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { parseMapFiles } from './game-files/map-files-parser';
+import { getLoadOrder } from './game-files/mods-load-order';
 import { logger } from './logger';
 
 const homeDirectory = os.homedir();
@@ -57,27 +58,50 @@ function main() {
     })
     .parseSync();
 
-  const gameFilePaths = fs
+  const requiredFiles = new Set([
+    'base.scs',
+    'base_map.scs',
+    'base_share.scs',
+    'core.scs',
+    'def.scs',
+    'locale.scs',
+    'version.scs',
+  ]);
+  const scsFilePaths = fs
     .readdirSync(args.gameDir, { withFileTypes: true })
     .filter(e => e.isFile() && e.name.endsWith('.scs'))
     .map(e => {
       return path.join(args.gameDir, e.name);
+    })
+    .filter(p => {
+      const fn = path.basename(p);
+      return requiredFiles.has(fn) || (args.includeDlc && fn.startsWith('dlc'));
     });
 
-  const modsFilePaths: string[] = [];
   if (args.modsDir) {
-    modsFilePaths.push(
-      ...fs
-        .readdirSync(args.modsDir, { withFileTypes: true })
-        .filter(
-          e =>
-            e.isFile() && (e.name.endsWith('.scs') || e.name.endsWith('.zip')),
-        )
-        .map(e => path.join(args.modsDir!, e.name)),
-    );
+    const loadOrder = getLoadOrder();
+
+    const modsFilePaths = fs
+      .readdirSync(args.modsDir, { withFileTypes: true })
+      .filter(
+        e =>
+          e.isFile() &&
+          (e.name.endsWith('.scs') || e.name.endsWith('.zip')) &&
+          loadOrder.includes(
+            path.basename(e.name).split(path.extname(e.name))[0],
+          ),
+      )
+      .map(e => path.join(args.modsDir!, e.name))
+      .sort(
+        (a, b) =>
+          loadOrder.indexOf(path.basename(a).split(path.extname(a))[0]) -
+          loadOrder.indexOf(path.basename(b).split(path.extname(b))[0]),
+      );
+
+    scsFilePaths.push(...modsFilePaths);
   }
 
-  const { map, ...result } = parseMapFiles(gameFilePaths, modsFilePaths, args);
+  const { map, ...result } = parseMapFiles(scsFilePaths, args);
   if (args.dryRun) {
     logger.success('dry run complete.');
     return;

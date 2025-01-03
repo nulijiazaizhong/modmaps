@@ -40,7 +40,7 @@ import { convertSiiToJson } from './convert-sii-to-json';
 import { parseDds } from './dds-parser';
 import { parseDefFiles } from './def-parser';
 import type { Entries } from './scs-archive';
-import { HashFsArchive } from './scs-archive';
+import { ScsArchive } from './scs-archive';
 import { parseSector } from './sector-parser';
 import {
   IconMatSchema,
@@ -49,13 +49,10 @@ import {
 } from './sii-schemas';
 
 export function parseMapFiles(
-  gameFilePaths: string[],
-  modsFilePaths: string[],
+  scsFilePaths: string[],
   {
-    includeDlc,
     onlyDefs,
   }: {
-    includeDlc: boolean;
     onlyDefs: boolean;
   },
 ):
@@ -70,28 +67,12 @@ export function parseMapFiles(
       map: string;
       defData: DefData;
     } {
-  const requiredFiles = new Set([
-    'base.scs',
-    'base_map.scs',
-    'base_share.scs',
-    'core.scs',
-    'def.scs',
-    'locale.scs',
-    'version.scs',
-  ]);
-  const archives = gameFilePaths
-    .filter(p => {
-      const fn = path.basename(p);
-      return requiredFiles.has(fn) || (includeDlc && fn.startsWith('dlc'));
-    })
-    .map(p => {
-      logger.log('adding', path.basename(p));
-      return HashFsArchive(p);
-    });
+  const archives = scsFilePaths.map(p => {
+    logger.log('adding', path.basename(p));
+    return ScsArchive(p);
+  });
   const entries = new CombinedEntries(archives);
-  for (const filePath of modsFilePaths) {
-    console.log(filePath);
-  }
+
   try {
     const version = parseVersionSii(entries);
     const defData = parseDefFiles(entries, version.application);

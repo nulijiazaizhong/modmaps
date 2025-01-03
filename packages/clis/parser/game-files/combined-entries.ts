@@ -8,12 +8,17 @@ import type {
   ScsArchiveV2,
   Store,
 } from './scs-archive';
+import type { ZipArchive } from './zip-archive';
 
 export class CombinedEntries implements Entries {
-  private readonly archives: readonly (ScsArchiveV1 | ScsArchiveV2)[];
+  private readonly archives: readonly (
+    | ScsArchiveV1
+    | ScsArchiveV2
+    | ZipArchive
+  )[];
 
-  constructor(archives: (ScsArchiveV1 | ScsArchiveV2)[]) {
-    const valid: (ScsArchiveV1 | ScsArchiveV2)[] = [];
+  constructor(archives: (ScsArchiveV1 | ScsArchiveV2 | ZipArchive)[]) {
+    const valid: (ScsArchiveV1 | ScsArchiveV2 | ZipArchive)[] = [];
     for (const archive of archives) {
       if (!archive.isValid()) {
         logger.warn(`${archive.path} is invalid. ignoring.`);
