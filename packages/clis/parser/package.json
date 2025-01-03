@@ -13,6 +13,7 @@
     "test": "vitest"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
     "@types/cli-progress": "^3.11.5",
     "@types/jest": "^29.5.11",
     "@types/node": "^22.7.4",
@@ -23,6 +24,7 @@
   "dependencies": {
     "@truckermudgeon/base": "0.0.0",
     "@truckermudgeon/map": "0.0.0",
+    "adm-zip": "^0.5.16",
     "ajv": "^8.12.0",
     "ajv-keywords": "^5.1.0",
     "bindings": "^1.5.0",

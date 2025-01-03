@@ -8,11 +8,12 @@ import zlib from 'zlib';
 import { logger } from '../logger';
 import { DdsHeader } from './dds-parser';
 import { MappedNumber, uint64le } from './restructure-helpers';
+import { ZipArchive } from './zip-archive';
 
 const require = createRequire(import.meta.url);
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-const { city64 } = require('bindings')('cityhash') as {
+export const { city64 } = require('bindings')('cityhash') as {
   city64: (s: string) => bigint;
 };
 
@@ -164,46 +165,51 @@ export interface Entries {
   files: Store<FileEntry>;
 }
 
-export class ScsArchive {
-  private readonly fd: number;
-  private readonly path: string;
-  private readonly fileType;
+export function HashFsArchive(path: string) {
+  const fd = fs.openSync(path, 'r');
 
-  constructor(readonly filePath: string) {
-    this.fd = fs.openSync(filePath, 'r');
-    this.path = filePath;
-
+  try {
     const buffer = Buffer.alloc(Version.size());
-    fs.readSync(this.fd, buffer, { length: buffer.length });
-    this.fileType = Version.fromBuffer(buffer);
-  }
+    fs.readSync(fd, buffer, { length: buffer.length });
+    const fileType = Version.fromBuffer(buffer);
 
-  scsFile(): ScsArchiveV1 | ScsArchiveV2 | undefined {
-    if (this.fileType.magic === 'SCS#' && this.fileType.version === 1) {
-      return new ScsArchiveV1(this.fd, this.path);
-    } else if (this.fileType.magic === 'SCS#' && this.fileType.version === 2) {
-      return new ScsArchiveV2(this.fd, this.path);
+    if (fileType.version === 1) {
+      return new ScsArchiveV1(path);
+    } else {
+      return new ScsArchiveV2(path);
     }
-    return undefined;
+  } finally {
+    fs.closeSync(fd);
   }
+}
 
-  dispose() {
-    fs.closeSync(this.fd);
+export function ScsArchive(path: string) {
+  const fd = fs.openSync(path, 'r');
+
+  try {
+    const buffer = Buffer.alloc(Version.size());
+    fs.readSync(fd, buffer, { length: buffer.length });
+    const fileType = Version.fromBuffer(buffer);
+
+    if (fileType.magic === 'SCS#' && fileType.version === 1) {
+      return new ScsArchiveV1(path);
+    } else if (fileType.magic === 'SCS#' && fileType.version === 2) {
+      return new ScsArchiveV2(path);
+    } else {
+      return new ZipArchive(path);
+    }
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
 export class ScsArchiveV1 {
   private readonly fd: number;
-  public readonly path: string;
   private readonly header;
   private entries: Entries | undefined;
 
-  constructor(
-    readonly file: number,
-    path: string,
-  ) {
-    this.fd = file;
-    this.path = path;
+  constructor(readonly path: string) {
+    this.fd = fs.openSync(path, 'r');
 
     const buffer = Buffer.alloc(FileHeaderV1.size());
     fs.readSync(this.fd, buffer, { length: buffer.length });
@@ -279,16 +285,11 @@ export class ScsArchiveV1 {
 
 export class ScsArchiveV2 {
   private readonly fd: number;
-  public readonly path: string;
   private readonly header;
   private entries: Entries | undefined;
 
-  constructor(
-    readonly file: number,
-    path: string,
-  ) {
-    this.fd = file;
-    this.path = path;
+  constructor(readonly path: string) {
+    this.fd = fs.openSync(path, 'r');
 
     const buffer = Buffer.alloc(FileHeaderV2.size());
     fs.readSync(this.fd, buffer, { length: buffer.length });
@@ -324,6 +325,8 @@ export class ScsArchiveV2 {
       }),
     );
     const metadataMap = this.createMetadataMap(entryHeaders);
+
+    logger.info('length:' + entryHeaders.length);
 
     const directories: DirectoryEntry[] = [];
     const files: FileEntry[] = [];
@@ -427,7 +430,7 @@ export class ScsArchiveV2 {
   }
 }
 
-function createStore<V extends { hash: bigint }>(values: V[]) {
+export function createStore<V extends { hash: bigint }>(values: V[]) {
   const map = new Map(values.map(v => [v.hash, v]));
   return {
     get: (key: string) => map.get(city64(key)),
