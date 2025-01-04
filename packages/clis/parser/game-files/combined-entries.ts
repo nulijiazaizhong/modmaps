@@ -4,10 +4,10 @@ import type {
   DirectoryEntry,
   Entries,
   FileEntry,
-  ScsArchiveV1,
   ScsArchiveV2,
   Store,
 } from './scs-archive';
+import type { ScsArchiveV1 } from './scs-archive-V1';
 import type { ZipArchive } from './zip-archive';
 
 export class CombinedEntries implements Entries {

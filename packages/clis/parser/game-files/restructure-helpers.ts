@@ -117,3 +117,19 @@ class Uint64String implements Base<string> {
 }
 
 export const uint64String = new Uint64String();
+
+export class Byte implements Base<Buffer> {
+  constructor(readonly length: number) {}
+
+  fromBuffer(buffer: Buffer): Buffer {
+    return buffer;
+  }
+
+  decode(stream: r.DecodeStream): Buffer {
+    return stream.readBuffer(this.length);
+  }
+
+  size(): number {
+    return this.length;
+  }
+}

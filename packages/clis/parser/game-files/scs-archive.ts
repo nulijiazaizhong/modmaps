@@ -8,6 +8,7 @@ import zlib from 'zlib';
 import { logger } from '../logger';
 import { DdsHeader } from './dds-parser';
 import { MappedNumber, uint64le } from './restructure-helpers';
+import { ScsArchiveV1 } from './scs-archive-V1';
 import { ZipArchive } from './zip-archive';
 
 const require = createRequire(import.meta.url);
@@ -18,33 +19,13 @@ export const { city64 } = require('bindings')('cityhash') as {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-const { gdeflate } = require('bindings')('gdeflate') as {
+export const { gdeflate } = require('bindings')('gdeflate') as {
   gdeflate: (inBuffer: ArrayBuffer, outBuffer: ArrayBuffer) => number;
 };
 
 const Version = new r.Struct({
   magic: new r.String(4),
   version: r.int16le,
-});
-
-const FileHeaderV1 = new r.Struct({
-  magic: new r.String(4),
-  version: r.int16le,
-  salt: r.int16le,
-  hashMethod: new r.String(4),
-  numEntries: r.int32le,
-  entriesOffset: r.int32le,
-});
-
-const EntryHeaderV1 = new r.Struct({
-  hash: uint64le,
-  // offset within the archive file at which the file for this entry's data starts.
-  offset: uint64le,
-  // bitfields can be referenced as entry.flags.isDirectory and entry.flags.isCompressed
-  flags: new r.Bitfield(r.uint32le, ['isDirectory', 'isCompressed']),
-  crc: r.uint32le,
-  size: r.uint32le,
-  compressedSize: r.uint32le,
 });
 
 const FileHeaderV2 = new r.Struct({
@@ -165,23 +146,23 @@ export interface Entries {
   files: Store<FileEntry>;
 }
 
-export function HashFsArchive(path: string) {
-  const fd = fs.openSync(path, 'r');
-
-  try {
-    const buffer = Buffer.alloc(Version.size());
-    fs.readSync(fd, buffer, { length: buffer.length });
-    const fileType = Version.fromBuffer(buffer);
-
-    if (fileType.version === 1) {
-      return new ScsArchiveV1(path);
-    } else {
-      return new ScsArchiveV2(path);
-    }
-  } finally {
-    fs.closeSync(fd);
-  }
-}
+// export function HashFsArchive(path: string) {
+//   const fd = fs.openSync(path, 'r');
+//
+//   try {
+//     const buffer = Buffer.alloc(Version.size());
+//     fs.readSync(fd, buffer, { length: buffer.length });
+//     const fileType = Version.fromBuffer(buffer);
+//
+//     if (fileType.version === 1) {
+//       return new ScsArchiveV1(path);
+//     } else {
+//       return new ScsArchiveV2(path);
+//     }
+//   } finally {
+//     fs.closeSync(fd);
+//   }
+// }
 
 export function ScsArchive(path: string) {
   const fd = fs.openSync(path, 'r');
@@ -200,86 +181,6 @@ export function ScsArchive(path: string) {
     }
   } finally {
     fs.closeSync(fd);
-  }
-}
-
-export class ScsArchiveV1 {
-  private readonly fd: number;
-  private readonly header;
-  private entries: Entries | undefined;
-
-  constructor(readonly path: string) {
-    this.fd = fs.openSync(path, 'r');
-
-    const buffer = Buffer.alloc(FileHeaderV1.size());
-    fs.readSync(this.fd, buffer, { length: buffer.length });
-    this.header = FileHeaderV1.fromBuffer(buffer);
-  }
-
-  dispose() {
-    fs.closeSync(this.fd);
-  }
-
-  isValid(): boolean {
-    return (
-      this.header.magic === 'SCS#' &&
-      this.header.hashMethod === 'CITY' &&
-      this.header.version === 1
-    );
-  }
-
-  parseEntries(): Entries {
-    Preconditions.checkState(this.isValid());
-    if (this.entries) {
-      return this.entries;
-    }
-
-    const entryHeaders = new r.Array(
-      EntryHeaderV1,
-      this.header.numEntries,
-    ).fromBuffer(
-      this.readData({
-        offset: this.header.entriesOffset,
-        size: EntryHeaderV1.size() * this.header.numEntries,
-      }),
-    );
-
-    const directories: DirectoryEntry[] = [];
-    const files: FileEntry[] = [];
-    for (const header of entryHeaders) {
-      const entry = createEntryV1(this.fd, {
-        hash: header.hash,
-        offset: header.offset,
-        size: header.compressedSize,
-        isDirectory: header.flags.isDirectory,
-        isDataCompressed: header.flags.isCompressed,
-      });
-      if (entry.type === 'directory') {
-        directories.push(entry);
-      } else {
-        files.push(entry);
-      }
-    }
-    this.entries = {
-      directories: createStore(directories),
-      files: createStore(files),
-    };
-    return this.entries;
-  }
-
-  private readData({
-    offset, //
-    size, //
-  }: {
-    offset: number;
-    size: number;
-  }): Buffer {
-    const buffer = Buffer.alloc(size);
-    fs.readSync(this.fd, buffer, {
-      length: buffer.length,
-      position: offset,
-    });
-    return buffer;
   }
 }
 
@@ -325,8 +226,6 @@ export class ScsArchiveV2 {
       }),
     );
     const metadataMap = this.createMetadataMap(entryHeaders);
-
-    logger.info('length:' + entryHeaders.length);
 
     const directories: DirectoryEntry[] = [];
     const files: FileEntry[] = [];
@@ -437,23 +336,6 @@ export function createStore<V extends { hash: bigint }>(values: V[]) {
   };
 }
 
-interface EntryV1Metadata {
-  hash: bigint;
-  offset: bigint;
-  size: number;
-  isDirectory: boolean;
-  isDataCompressed: boolean;
-}
-
-function createEntryV1(
-  fd: number,
-  metadata: EntryV1Metadata,
-): DirectoryEntry | FileEntry {
-  return metadata.isDirectory
-    ? new ScsArchiveDirectoryV1(fd, metadata)
-    : new ScsArchiveFileV1(fd, metadata);
-}
-
 interface EntryV2Metadata {
   hash: bigint;
   offset: bigint;
@@ -552,74 +434,13 @@ export interface DirectoryEntry {
   readonly files: readonly string[];
 }
 
-const TileStreamHeader = new r.Struct({
+export const TileStreamHeader = new r.Struct({
   id: r.uint8,
   magic: r.uint8,
   numTiles: r.uint16le,
   tileSizeIdx: r.uint32le,
   lastTileSize: r.uint32le,
 });
-
-abstract class ScsArchiveEntryV1 {
-  abstract type: string;
-
-  protected constructor(
-    protected readonly fd: number,
-    protected readonly metadata: EntryV1Metadata,
-  ) {}
-
-  get hash(): bigint {
-    return this.metadata.hash;
-  }
-
-  read() {
-    const rawData = Buffer.alloc(this.metadata.size);
-    fs.readSync(this.fd, rawData, {
-      length: rawData.length,
-      position: this.metadata.offset,
-    });
-    if (!this.metadata.isDataCompressed) {
-      return rawData;
-    }
-    return zlib.inflateSync(rawData);
-  }
-}
-
-class ScsArchiveFileV1 extends ScsArchiveEntryV1 implements FileEntry {
-  readonly type = 'file';
-
-  constructor(fd: number, metadata: EntryV1Metadata) {
-    super(fd, metadata);
-  }
-}
-
-class ScsArchiveDirectoryV1
-  extends ScsArchiveEntryV1
-  implements DirectoryEntry
-{
-  readonly type = 'directory';
-  readonly subdirectories: readonly string[];
-  readonly files: readonly string[];
-
-  constructor(fd: number, metadata: EntryV1Metadata) {
-    super(fd, metadata);
-
-    const subdirectories: string[] = [];
-    const files: string[] = [];
-    for (const str of this.read().toString().split('\n')) {
-      if (str === '') {
-        continue;
-      }
-      if (str.startsWith('*')) {
-        subdirectories.push(str.substring(1));
-      } else {
-        files.push(str);
-      }
-    }
-    this.subdirectories = subdirectories;
-    this.files = files;
-  }
-}
 
 abstract class ScsArchiveEntryV2 {
   abstract type: string;
