@@ -37,6 +37,16 @@ export class ScsArchiveV1 {
     const buffer = Buffer.alloc(FileHeaderV1.size());
     fs.readSync(this.fd, buffer, { length: buffer.length });
     this.header = FileHeaderV1.fromBuffer(buffer);
+    // try to read first entryHeader hash, if it is 0n, then read entryHeader from file end
+    // const buffer2 = Buffer.alloc(EntryHeaderV1.size());
+    // fs.readSync(this.fd, buffer2, {
+    //   length: buffer2.length,
+    //   position: this.header.entriesOffset,
+    // });
+    // const entry = EntryHeaderV1.fromBuffer(buffer2);
+    // if (entry.hash === 0n) {
+    //   this.header.entriesOffset += 65535 * EntryHeaderV1.size()
+    // }
   }
 
   dispose() {
@@ -137,6 +147,8 @@ abstract class ScsArchiveEntryV1 {
 
   read() {
     const rawData = Buffer.alloc(this.metadata.size);
+    if (rawData.length === 0) return rawData;
+
     fs.readSync(this.fd, rawData, {
       length: rawData.length,
       position: this.metadata.offset,
