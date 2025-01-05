@@ -202,8 +202,8 @@ export class ZipArchive {
     }
 
     this.entries = {
-      directories: createStore(directories),
-      files: createStore(files),
+      directories: createStore(directories, 0),
+      files: createStore(files, 0),
     };
     return this.entries;
   }

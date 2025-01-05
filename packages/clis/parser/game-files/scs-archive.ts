@@ -239,8 +239,8 @@ export class ScsArchiveV2 {
       }
     }
     this.entries = {
-      directories: createStore(directories),
-      files: createStore(files),
+      directories: createStore(directories, this.header.salt),
+      files: createStore(files, this.header.salt),
     };
     return this.entries;
   }
@@ -330,10 +330,13 @@ export class ScsArchiveV2 {
   }
 }
 
-export function createStore<V extends { hash: bigint }>(values: V[]) {
+export function createStore<V extends { hash: bigint }>(
+  values: V[],
+  salt: number,
+) {
   const map = new Map(values.map(v => [v.hash, v]));
   return {
-    get: (key: string) => map.get(city64(key)),
+    get: (key: string) => map.get(city64(salt === 0 ? key : salt + key)),
   };
 }
 

@@ -17,24 +17,7 @@ export function convertSiiToJson<T>(
     `${siiPath} does not exist`,
   );
   const buffer = siiFile.read();
-
-  // Some .sii files (like locale files) may be 3nk-encrypted.
-  let sii;
-  const magic = buffer.toString('utf8', 0, 3);
-  if (magic === '3nK') {
-    // https://github.com/dariowouters/ts-map/blob/e73adad923f60bbbb637dd4642910d1a0b1154e3/TsMap/Helpers/MemoryHelper.cs#L109
-    if (buffer.length < 5) {
-      throw new Error();
-    }
-    let key = buffer.readUint8(5);
-    for (let i = 6; i < buffer.length; i++) {
-      buffer[i] = (((key << 2) ^ (key ^ 0xff)) << 3) ^ key ^ buffer[i];
-      key++;
-    }
-    sii = buffer.toString('utf8', 6);
-  } else {
-    sii = buffer.toString();
-  }
+  let sii = decryptedSii(buffer);
 
   // HACK localization.sui files just contain unwrapped properties, e.g.:
   //   key[]: foo
@@ -70,4 +53,25 @@ export function convertSiiToJson<T>(
   console.log(JSON.stringify(json, null, 2));
   logger.error(ajv.errorsText(validate.errors));
   throw new Error();
+}
+
+export function decryptedSii(buffer: Buffer) {
+  // Some .sii files (like locale files) may be 3nk-encrypted.
+  let sii;
+  const magic = buffer.toString('utf8', 0, 3);
+  if (magic === '3nK') {
+    // https://github.com/dariowouters/ts-map/blob/e73adad923f60bbbb637dd4642910d1a0b1154e3/TsMap/Helpers/MemoryHelper.cs#L109
+    if (buffer.length < 5) {
+      throw new Error();
+    }
+    let key = buffer.readUint8(5);
+    for (let i = 6; i < buffer.length; i++) {
+      buffer[i] = (((key << 2) ^ (key ^ 0xff)) << 3) ^ key ^ buffer[i];
+      key++;
+    }
+    sii = buffer.toString('utf8', 6);
+  } else {
+    sii = buffer.toString();
+  }
+  return sii;
 }

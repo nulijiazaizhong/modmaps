@@ -18,7 +18,7 @@ import type {
 } from '@truckermudgeon/map/types';
 import type { JSONSchemaType } from 'ajv';
 import { logger } from '../logger';
-import { convertSiiToJson } from './convert-sii-to-json';
+import { convertSiiToJson, decryptedSii } from './convert-sii-to-json';
 import { parseModelPmg } from './model-pmg-parser';
 import { parsePrefabPpd } from './prefab-ppd-parser';
 import type { Entries } from './scs-archive';
@@ -293,7 +293,7 @@ export function parseDefFiles(entries: Entries, application: 'ats' | 'eut2') {
 function parseIncludeOnlySii(siiPath: string, entries: Entries): string[] {
   logger.debug('parsing', siiPath, 'for @include directives');
   const f = Preconditions.checkExists(entries.files.get(siiPath));
-  const res = parseSii(f.read().toString());
+  const res = parseSii(decryptedSii(f.read()).toString());
   if (!res.ok) {
     logger.error('error parsing', siiPath);
     throw new Error();
