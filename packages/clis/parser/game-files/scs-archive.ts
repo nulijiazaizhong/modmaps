@@ -19,8 +19,9 @@ export const { city64 } = require('bindings')('cityhash') as {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-export const { gdeflate } = require('bindings')('gdeflate') as {
+export const { gdeflate, deflate } = require('bindings')('gdeflate') as {
   gdeflate: (inBuffer: ArrayBuffer, outBuffer: ArrayBuffer) => number;
+  deflate: (inBuffer: ArrayBuffer, outBuffer: ArrayBuffer) => number;
 };
 
 const Version = new r.Struct({

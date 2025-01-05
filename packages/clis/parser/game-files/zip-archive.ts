@@ -5,7 +5,7 @@ import path from 'path';
 import * as r from 'restructure';
 import { Byte } from './restructure-helpers';
 import type { DirectoryEntry, Entries, FileEntry } from './scs-archive';
-import { city64, createStore, gdeflate, TileStreamHeader } from './scs-archive';
+import { city64, createStore, deflate } from './scs-archive';
 
 const CompressionMethod = {
   None: 0,
@@ -262,12 +262,10 @@ abstract class ZipArchiveEntry {
     switch (this.entry.compressedMethod) {
       case CompressionMethod.Deflate: {
         const outBuffer = Buffer.alloc(this.entry.uncompressedSize);
-        const result = gdeflate(
-          rawData.buffer.slice(TileStreamHeader.size()),
-          outBuffer.buffer,
-        );
+
+        const result = deflate(rawData.buffer, outBuffer.buffer);
         if (result !== 0) {
-          throw new Error(`gdeflate error: ${result}`);
+          throw new Error(`deflate error: ${result}`);
         }
         return outBuffer;
       }
