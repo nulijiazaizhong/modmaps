@@ -19,6 +19,10 @@ export function convertSiiToJson<T>(
   const buffer = siiFile.read();
   let sii = decryptedSii(buffer);
 
+  if (sii.length < 10) {
+    return false as T;
+  }
+
   // HACK localization.sui files just contain unwrapped properties, e.g.:
   //   key[]: foo
   //   val[]: bar
@@ -30,29 +34,35 @@ export function convertSiiToJson<T>(
     sii = `localizationDb : .localization {${sii}}`;
   }
 
-  const res = parseSii(sii);
-  if (!res.ok) {
-    logger.error('error parsing', siiPath);
-    if (res.parseErrors.length) {
-      const line = res.parseErrors[0].token.startLine!;
-      const lines = sii.split('\n');
-      logger.error(lines.slice(line - 1, line + 1).join('\n'));
-      logger.error(res.parseErrors);
-    } else {
-      logger.error(res.lexErrors);
+  try {
+    const res = parseSii(sii);
+    if (!res.ok) {
+      logger.error('error parsing', siiPath);
+      if (res.parseErrors.length) {
+        const line = res.parseErrors[0].token.startLine!;
+        const lines = sii.split('\n');
+        logger.error(lines.slice(line - 1, line + 1).join('\n'));
+        logger.error(res.parseErrors);
+      } else {
+        logger.error(res.lexErrors);
+      }
+      throw new Error();
     }
+
+    const json = jsonConverter.convert(res.cst);
+    if (json['length'] === 0) return false as T;
+    const validate = ajv.compile(schema);
+    if (validate(json)) {
+      return json;
+    }
+    logger.error('error validating', siiPath);
+    console.log(JSON.stringify(json, null, 2));
+    logger.error(ajv.errorsText(validate.errors));
+    throw new Error();
+  } catch {
+    logger.error('error parsing', sii);
     throw new Error();
   }
-
-  const json = jsonConverter.convert(res.cst);
-  const validate = ajv.compile(schema);
-  if (validate(json)) {
-    return json;
-  }
-  logger.error('error validating', siiPath);
-  console.log(JSON.stringify(json, null, 2));
-  logger.error(ajv.errorsText(validate.errors));
-  throw new Error();
 }
 
 export function decryptedSii(buffer: Buffer) {

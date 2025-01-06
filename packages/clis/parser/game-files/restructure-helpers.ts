@@ -53,7 +53,10 @@ class Token implements Base<string> {
   }
 
   decode(stream: r.DecodeStream): string {
-    return Token.tokenToString(stream.readBuffer(8).readBigUInt64LE());
+    const buffer = stream.readBuffer(8);
+    const emptyBuffer = Buffer.alloc(8);
+    emptyBuffer.fill(buffer, 8 - buffer.length);
+    return Token.tokenToString(buffer.readBigUInt64LE());
   }
 
   size() {

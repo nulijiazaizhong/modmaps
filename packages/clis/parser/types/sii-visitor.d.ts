@@ -104,6 +104,7 @@ export type WrappedSiiCstChildren = {
   LCurly: IToken[];
   includeDirective?: IncludeDirectiveCstNode[];
   object?: ObjectCstNode[];
+  WhiteSpace?: IToken[];
   RCurly: IToken[];
 };
 
@@ -113,7 +114,8 @@ export interface UnwrappedSiiCstNode extends CstNode {
 }
 
 export type UnwrappedSiiCstChildren = {
-  object: ObjectCstNode[];
+  object?: ObjectCstNode[];
+  objectProperty?: ObjectPropertyCstNode[];
 };
 
 export interface SiiCstNode extends CstNode {

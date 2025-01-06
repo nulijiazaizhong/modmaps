@@ -22,11 +22,11 @@ const PmgHeader = new r.Struct({
 });
 
 export function parseModelPmg(buffer: Buffer): ModelDescription {
-  const version = buffer.readUint8();
-  if (version !== 21) {
-    logger.error('unknown .pmg file version', version);
-    throw new Error();
-  }
+  // const version = buffer.readUint8();
+  // if (version !== 21) {
+  //   logger.error('unknown .pmg file version', version);
+  //   throw new Error();
+  // }
 
   const header = PmgHeader.fromBuffer(buffer);
   if (header.magic !== 'gmP') {

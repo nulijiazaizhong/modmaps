@@ -52,9 +52,7 @@ import {
   ModelSiiSchema,
   PrefabSiiSchema,
   RoadLookSiiSchema,
-  RouteSiiSchema,
   SpeedLimitSiiSchema,
-  ViewpointsSiiSchema,
 } from './sii-schemas';
 import { includeDirectiveCollector } from './sii-visitors';
 
@@ -89,9 +87,11 @@ export function parseDefFiles(entries: Entries, application: 'ats' | 'eut2') {
     m: Map<string, U>,
   ) => {
     const t = convertSiiToJson(path, entries, schema);
-    const u = p(t, entries);
-    if (u) {
-      m.set(u.token, u);
+    if (t) {
+      const u = p(t, entries);
+      if (u) {
+        m.set(u.token, u);
+      }
     }
   };
 
@@ -223,26 +223,26 @@ export function parseDefFiles(entries: Entries, application: 'ats' | 'eut2') {
     entries.directories.get('def/photo_album'),
   );
   const viewpoints = new Map<bigint, string>(); // item.uid to l10n token
-  let itemCount = 0;
-  for (const f of defPhotoAlbum.files) {
-    if (!/^(viewpoints|landmarks)\.sui$/.test(f)) {
-      continue;
-    }
-    const json = convertSiiToJson(
-      `def/photo_album/${f}`,
-      entries,
-      ViewpointsSiiSchema,
-    );
-    const items = json.photoAlbumItem;
-    for (const val of Object.values(items)) {
-      itemCount++;
-      for (const uid of val.objectsUid) {
-        const token = val.name.replace(/(^@@)|(@@$)/g, '');
-        viewpoints.set(uid, token);
-      }
-    }
-  }
-  logger.info('parsed', itemCount, 'viewpoints and photo trophies');
+  // let itemCount = 0;
+  // for (const f of defPhotoAlbum.files) {
+  //   if (!/^(viewpoints|landmarks)\.sui$/.test(f)) {
+  //     continue;
+  //   }
+  //   const json = convertSiiToJson(
+  //     `def/photo_album/${f}`,
+  //     entries,
+  //     ViewpointsSiiSchema,
+  //   );
+  //   const items = json.photoAlbumItem;
+  //   for (const val of Object.values(items)) {
+  //     itemCount++;
+  //     for (const uid of val.objectsUid) {
+  //       const token = val.name.replace(/(^@@)|(@@$)/g, '');
+  //       viewpoints.set(uid, token);
+  //     }
+  //   }
+  // }
+  // logger.info('parsed', itemCount, 'viewpoints and photo trophies');
 
   const achievements =
     application === 'ats'
@@ -262,17 +262,17 @@ export function parseDefFiles(entries: Entries, application: 'ats' | 'eut2') {
         );
   logger.info('parsed', achievements.size, 'achievements');
 
-  let routes: Map<string, Route>;
-  if (entries.files.get('def/route.sii')) {
-    routes = processRouteJson(
-      convertSiiToJson('def/route.sii', entries, RouteSiiSchema),
-    );
-  } else {
-    // if `def/route.sii` doesn't exist, then the installation doesn't have the
-    // Special Transport DLC.
-    routes = new Map();
-  }
-  logger.info('parsed', routes.size, 'special transport routes');
+  const routes: Map<string, Route> = new Map<string, Route>();
+  // if (entries.files.get('def/route.sii')) {
+  //   routes = processRouteJson(
+  //     convertSiiToJson('def/route.sii', entries, RouteSiiSchema),
+  //   );
+  // } else {
+  //   // if `def/route.sii` doesn't exist, then the installation doesn't have the
+  //   // Special Transport DLC.
+  //   routes = new Map();
+  // }
+  // logger.info('parsed', routes.size, 'special transport routes');
 
   return {
     achievements,
@@ -347,20 +347,19 @@ function toLaneSpeedClass(str: string): LaneSpeedClass {
 }
 
 function processSpeedLimitJson(obj: SpeedLimitsSii) {
+  if (!obj.countrySpeedLimit) return {};
   const { laneSpeedClass, limit, maxLimit, urbanLimit } =
     obj.countrySpeedLimit['.speed_limit.truck'];
 
   // HACK: extra validation that isn't expressed in schema
   assert(
-    [limit, maxLimit, urbanLimit].every(
-      array => array.length === laneSpeedClass.length,
-    ),
+    [limit, urbanLimit].every(array => array.length === laneSpeedClass.length),
   );
 
   return laneSpeedClass.reduce((obj, className, index) => {
     obj[toLaneSpeedClass(className)] = {
       limit: limit[index],
-      maxLimit: maxLimit[index],
+      maxLimit: maxLimit ? maxLimit[index] : limit[index],
       urbanLimit: urbanLimit[index],
     };
     return obj;
@@ -379,12 +378,15 @@ function processCompanyJson(obj: CompanySii, entries: Entries): Company {
   );
   if (editorFolder) {
     for (const f of editorFolder.files) {
+      if (f.endsWith('.zip')) continue;
       const city = convertSiiToJson(
         `def/company/${companyToken}/editor/${f}`,
         entries,
         CityCompanySiiSchema,
       );
+      if (!city.companyDef) continue;
       for (const [, entry] of Object.entries(city.companyDef)) {
+        if (!entry.city) continue;
         cityTokens.push(entry.city);
       }
     }
@@ -401,8 +403,14 @@ function processCompanyJson(obj: CompanySii, entries: Entries): Company {
           entries,
           CargoSiiSchema,
         );
-        for (const [, entry] of Object.entries(cargo.cargoDef)) {
-          arr.push(entry.cargo);
+        if (cargo.cargoDef) {
+          for (const [, entry] of Object.entries(cargo.cargoDef)) {
+            arr.push(entry.cargo);
+          }
+        } else if (cargo.cargoData) {
+          for (const [, entry] of Object.entries(cargo.cargoData)) {
+            arr.push(entry.cargo);
+          }
         }
       }
     }
@@ -440,6 +448,7 @@ function processFerryJson(obj: FerrySii, entries: Entries) {
       FerryConnectionSiiSchema,
     );
     const ferryConnection = json.ferryConnection;
+    if (!ferryConnection) continue;
     const key = Object.keys(ferryConnection)[0];
     // key is expected to be in form: "conn.source_token.dest_token"
     const [, start, end] = key.split('.');
@@ -503,31 +512,35 @@ function processPrefabJson(
       logger.warn(`could not find prefab file for ${token}`);
       continue;
     }
-    const ppd = parsePrefabPpd(ppdFile.read());
-    if (ppd.mapPoints.some(p => p.type === 'polygon')) {
-      // TODO figure out a way to get building footprint information for
-      //  polygons in prefabs that look like buildings.
+    try {
+      const ppd = parsePrefabPpd(ppdFile.read());
+      if (ppd.mapPoints.some(p => p.type === 'polygon')) {
+        // TODO figure out a way to get building footprint information for
+        //  polygons in prefabs that look like buildings.
 
-      // Looks like there are spawn/no-spawn variants of prefabs that
-      // reference the same pmg. Strip out the "_spawn" suffix when searching
-      // for the associated pmg.
-      const pmgPath = path.replace(/(_spawn)?\.ppd$/, '.pmg');
-      const pmgFile = entries.files.get(pmgPath);
-      if (!pmgFile) {
-        logger.warn(`could not find pmg file ${pmgPath} for ${token}`);
-      } else {
-        //const pmg = parseModelPmg(pmgFile.read());
-        //if (pmg) {
-        //  //console.log(path, pmg?.height);
-        //}
+        // Looks like there are spawn/no-spawn variants of prefabs that
+        // reference the same pmg. Strip out the "_spawn" suffix when searching
+        // for the associated pmg.
+        const pmgPath = path.replace(/(_spawn)?\.ppd$/, '.pmg');
+        const pmgFile = entries.files.get(pmgPath);
+        if (!pmgFile) {
+          logger.warn(`could not find pmg file ${pmgPath} for ${token}`);
+        } else {
+          //const pmg = parseModelPmg(pmgFile.read());
+          //if (pmg) {
+          //  //console.log(path, pmg?.height);
+          //}
+        }
       }
+      prefabs.set(token, {
+        path,
+        ...ppd,
+      });
+      //      console.log(path);
+      //      toRoadSegmentsAndPolygons(prefabs.get(token)!);
+    } catch {
+      console.warn(`could not parse ppd file for ${path}`);
     }
-    prefabs.set(token, {
-      path,
-      ...ppd,
-    });
-    //      console.log(path);
-    //      toRoadSegmentsAndPolygons(prefabs.get(token)!);
   }
   return prefabs;
 }

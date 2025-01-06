@@ -257,6 +257,8 @@ export const MapAreaColorUtils = {
 export enum MapOverlayType {
   Road = 0,
   Parking = 1,
+  City = 2,
+  Text = 3,
   Landmark = 4,
 }
 
@@ -267,6 +269,10 @@ export const MapOverlayTypeUtils = {
         return MapOverlayType.Road;
       case 1:
         return MapOverlayType.Parking;
+      case 2:
+        return MapOverlayType.City;
+      case 3:
+        return MapOverlayType.Text;
       case 4:
         return MapOverlayType.Landmark;
       default:
@@ -293,6 +299,7 @@ export enum ItemType {
   Sound = 21,
   Garage = 22,
   CameraPoint = 23,
+  Walker = 28,
   Trigger = 34,
   FuelPump = 35, // services
   Sign = 36, // sign

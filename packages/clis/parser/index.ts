@@ -122,17 +122,17 @@ function main() {
     );
   }
 
-  const pngOutputDir = path.join(args.outputDir, 'icons');
-  if (!result.onlyDefs) {
-    const { icons } = result;
-    logger.log('writing', icons.size, `.png files to ${pngOutputDir}...`);
-    if (!fs.existsSync(pngOutputDir)) {
-      fs.mkdirSync(pngOutputDir);
-    }
-    for (const [name, buffer] of icons) {
-      fs.writeFileSync(path.join(pngOutputDir, name + '.png'), buffer);
-    }
-  }
+  // const pngOutputDir = path.join(args.outputDir, 'icons');
+  // if (!result.onlyDefs) {
+  //   const { icons } = result;
+  //   logger.log('writing', icons.size, `.png files to ${pngOutputDir}...`);
+  //   if (!fs.existsSync(pngOutputDir)) {
+  //     fs.mkdirSync(pngOutputDir);
+  //   }
+  //   for (const [name, buffer] of icons) {
+  //     fs.writeFileSync(path.join(pngOutputDir, name + '.png'), buffer);
+  //   }
+  // }
 
   logger.success('done.');
 }

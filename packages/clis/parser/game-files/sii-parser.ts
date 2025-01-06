@@ -156,12 +156,18 @@ class SiiParser extends CstParser {
       this.OR([
         { ALT: () => this.SUBRULE(this.includeDirective) },
         { ALT: () => this.SUBRULE(this.object) },
+        { ALT: () => this.CONSUME(WhiteSpace) },
       ]);
     });
     this.CONSUME(RCurly);
   });
   readonly unwrappedSii = this.RULE('unwrappedSii', () => {
-    this.AT_LEAST_ONE(() => this.SUBRULE(this.object));
+    this.AT_LEAST_ONE(() => {
+      this.OR([
+        { ALT: () => this.SUBRULE(this.object) },
+        { ALT: () => this.SUBRULE(this.objectProperty) },
+      ]);
+    });
   });
   readonly sii = this.RULE('sii', () => {
     this.OR([

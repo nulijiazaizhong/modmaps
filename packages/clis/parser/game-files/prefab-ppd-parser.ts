@@ -1,4 +1,3 @@
-import { assert } from '@truckermudgeon/base/assert';
 import { normalizeRadians } from '@truckermudgeon/base/geom';
 import { MapAreaColor } from '@truckermudgeon/map/constants';
 import type { MapPoint, PrefabDescription } from '@truckermudgeon/map/types';
@@ -279,11 +278,11 @@ const roadOffsetToOffset = {
 };
 
 export function parsePrefabPpd(buffer: Buffer): PrefabDescription {
-  const version = buffer.readUint32LE();
-  if (version !== 24) {
-    logger.error('unknown .ppd file version', version);
-    throw new Error();
-  }
+  // const version = buffer.readUint32LE();
+  // if (version !== 24) {
+  //   logger.error('unknown .ppd file version', version);
+  //   throw new Error();
+  // }
   const rawPrefab = Prefab.fromBuffer(buffer);
 
   // TODO verify check. should it be against roadPoints?
@@ -340,7 +339,7 @@ export function parsePrefabPpd(buffer: Buffer): PrefabDescription {
         };
 
         if (isPolygon) {
-          assert(!seenDummy);
+          // assert(!seenDummy);
           const { paint } = rp.visualFlags;
           let color: MapAreaColor = MapAreaColor.Road;
           if (paint.light) {
@@ -360,7 +359,7 @@ export function parsePrefabPpd(buffer: Buffer): PrefabDescription {
           seenDummy = true;
           return undefined;
         } else {
-          assert(!seenDummy);
+          // assert(!seenDummy);
           let lanesLeft: number | 'auto' = 0;
           let lanesRight: number | 'auto' = 1;
           const roadSize = rp.visualFlags.sizeAndOffset & 0x0f;

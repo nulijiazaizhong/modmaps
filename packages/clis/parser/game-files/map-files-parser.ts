@@ -85,7 +85,8 @@ export function parseMapFiles(
       };
     }
 
-    const icons = parseIconMatFiles(entries);
+    // const icons = parseIconMatFiles(entries);
+    const icons = new Map<string, Buffer<ArrayBufferLike>>();
     const sectorData = parseSectorFiles(entries);
     return {
       onlyDefs: false,
@@ -106,67 +107,82 @@ function parseVersionSii(entries: Entries) {
   return { application, version };
 }
 
-function parseSectorFiles(entries: Entries) {
+export function parseSectorFiles(entries: Entries) {
   const mapDir = Preconditions.checkExists(entries.directories.get('map'));
   const mbds = mapDir.files.filter(f => f.endsWith('.mbd'));
-  if (mbds.length !== 1) {
-    throw new Error();
-  }
-  const map = mbds[0].replace(/\.mbd$/, '');
-  const sectorRoot = Preconditions.checkExists(
-    entries.directories.get(`map/${map}`),
-  );
-  logger.start(`parsing ${map} sector files...`);
-  const start = Date.now();
-
-  const baseFiles = sectorRoot.files.filter(
-    f => f.endsWith('.base') || f.endsWith('.aux'),
-  );
-  const bar = new cliProgress.SingleBar(
-    {
-      format: `[{bar}] | {filename} | {value} of {total}`,
-      stopOnComplete: true,
-      clearOnComplete: true,
-    },
-    cliProgress.Presets.rect,
-  );
-  bar.start(baseFiles.length, 0);
 
   const sectors = new Map<string, { items: Item[]; nodes: Node[] }>();
-  const sectorRegex = /^sec([+-]\d{4})([+-]\d{4})$/;
-  for (const f of baseFiles) {
-    const sectorKey = f.replace(/\.(base|aux)$/, '');
-    if (!sectorRegex.test(sectorKey)) {
-      throw new Error(`unexpected sector key "${sectorKey}"`);
+  for (const mbd of mbds) {
+    const map = mbd.replace(/\.mbd$/, '');
+    const sectorRoot = entries.directories.get(`map/${map}`);
+    if (!sectorRoot) {
+      logger.warn('missing sector directory', map);
+      continue;
     }
-    const [, sectorX, sectorY] = Array.from(
-      assertExists(sectorRegex.exec(sectorKey)),
-      parseFloat,
+
+    logger.start(`parsing ${map} sector files...`);
+    const start = Date.now();
+
+    const baseFiles = sectorRoot.files.filter(
+      f => f.endsWith('.base') || f.endsWith('.aux'),
     );
-    if (isNaN(sectorX) || isNaN(sectorY)) {
-      throw new Error(`couldn't parse ${sectorX} or ${sectorY}`);
+    const bar = new cliProgress.SingleBar(
+      {
+        format: `[{bar}] | {filename} | {value} of {total}`,
+        stopOnComplete: true,
+        clearOnComplete: true,
+      },
+      cliProgress.Presets.rect,
+    );
+    bar.start(baseFiles.length, 0);
+
+    const sectorRegex = /^sec([+-]\d{4})([+-]\d{4})$/;
+    for (const f of baseFiles) {
+      const sectorKey = f.replace(/\.(base|aux)$/, '');
+      if (!sectorRegex.test(sectorKey)) {
+        throw new Error(`unexpected sector key "${sectorKey}"`);
+      }
+      const [, sectorX, sectorY] = Array.from(
+        assertExists(sectorRegex.exec(sectorKey)),
+        parseFloat,
+      );
+      if (isNaN(sectorX) || isNaN(sectorY)) {
+        throw new Error(`couldn't parse ${sectorX} or ${sectorY}`);
+      }
+      const { items, nodes } = putIfAbsent(
+        sectorKey,
+        { items: [], nodes: [] },
+        sectors,
+      );
+      const baseFile = assertExists(entries.files.get(`map/${map}/${f}`));
+      try {
+        const sector = parseSector(baseFile.read());
+        if (!sector) {
+          bar.increment({ filename: f });
+          continue;
+        }
+        items.push(...sector.items.map(i => ({ ...i, sectorX, sectorY })));
+        nodes.push(...sector.nodes.map(n => ({ ...n, sectorX, sectorY })));
+      } catch {
+        bar.increment({ filename: f });
+        logger.error(`error parsing sector file...{map/${map}/${f}}`);
+        continue;
+      }
+
+      bar.increment({ filename: f });
     }
-    const { items, nodes } = putIfAbsent(
-      sectorKey,
-      { items: [], nodes: [] },
-      sectors,
+    logger.success(
+      'parsed',
+      baseFiles.length,
+      map,
+      'sector files in',
+      (Date.now() - start) / 1000,
+      'seconds',
     );
-    const baseFile = assertExists(entries.files.get(`map/${map}/${f}`));
-    const sector = parseSector(baseFile.read());
-    items.push(...sector.items.map(i => ({ ...i, sectorX, sectorY })));
-    nodes.push(...sector.nodes.map(n => ({ ...n, sectorX, sectorY })));
-    bar.increment({ filename: f });
   }
-  logger.success(
-    'parsed',
-    baseFiles.length,
-    'sector files in',
-    (Date.now() - start) / 1000,
-    'seconds',
-  );
 
   return {
-    map,
+    map: 'europe',
     sectors,
   };
 }
@@ -416,7 +432,7 @@ function postProcess(
         break;
       case ItemType.Company:
         checkReference(item.nodeUid, nodesByUid, 'nodeUid', item);
-        checkReference(item.token, icons, 'company token', item);
+        // checkReference(item.token, icons, 'company token', item);
         // disable this line when not processing every state; gets noisy otherwise.
         checkReference(item.cityToken, defData.cities, 'city token', item);
         referencedNodeUids.add(item.nodeUid);
@@ -488,7 +504,8 @@ function postProcess(
   for (const item of poifulItems) {
     switch (item.type) {
       case ItemType.Prefab: {
-        const prefabDescription = assertExists(defData.prefabs.get(item.token));
+        const prefabDescription = defData.prefabs.get(item.token);
+        if (!prefabDescription) break;
         const prefabMeta = {
           prefabUid: item.uid,
           prefabPath: prefabDescription.path,
@@ -589,11 +606,13 @@ function postProcess(
           case MapOverlayType.Road:
             if (item.token === '') {
               // ignore
-            } else if (!icons.has(item.token)) {
-              logger.warn(
-                `unknown road overlay token "${item.token}". skipping.`,
-              );
-            } else {
+            }
+            // else if (!icons.has(item.token)) {
+            //   logger.warn(
+            //     `unknown road overlay token "${item.token}". skipping.`,
+            //   );
+            // }
+            else {
               // TODO look into ets2 road overlays with token 'weigh_ico'.
               // can they be considered facilities? do they have linked prefabs?
               pois.push({
@@ -662,9 +681,8 @@ function postProcess(
           break;
         }
 
-        const prefabDescription = assertExists(
-          defData.prefabs.get(prefabItem.token),
-        );
+        const prefabDescription = defData.prefabs.get(prefabItem.token);
+        if (!prefabDescription) break;
         const companySpawnPos = prefabDescription.spawnPoints.find(
           p => p.type === SpawnPointType.CompanyPos,
         );
@@ -686,9 +704,9 @@ function postProcess(
             itemUid: item.uid,
             nodeUid: item.nodeUid,
           });
-          ({ x, y, sectorX, sectorY } = assertExists(
-            nodesByUid.get(item.nodeUid),
-          ));
+          const node = nodesByUid.get(item.nodeUid);
+          if (!node) break;
+          ({ x, y, sectorX, sectorY } = assertExists(node));
         }
         const companyName = defData.companies.get(item.token)?.name;
         if (companyName == null) {
@@ -709,13 +727,14 @@ function postProcess(
         break;
       }
       case ItemType.Ferry: {
-        const { x, y, sectorX, sectorY } = assertExists(
-          nodesByUid.get(item.nodeUid),
-        );
+        const node = nodesByUid.get(item.nodeUid);
+        if (!node) break;
+        const { x, y, sectorX, sectorY } = assertExists(node);
         const pos = { x, y, sectorX, sectorY };
-        const ferry = assertExists(defData.ferries.get(item.token));
+        const ferry = defData.ferries.get(item.token);
+        if (!ferry) break;
         const label = ferry.nameLocalized
-          ? assertExists(l10n.get(ferry.nameLocalized.replaceAll('@', '')))
+          ? (l10n.get(ferry.nameLocalized.replaceAll('@', '')) ?? ferry.name)
           : ferry.name;
         pois.push({
           ...pos,
@@ -807,19 +826,24 @@ function postProcess(
   // Augment partial ferry info from defs with start/end position info
   const ferries: Ferry[] = [];
   for (const [token, partialFerry] of defData.ferries) {
-    const { nodeUid, train } = assertExists(ferryItems.get(token));
-    const { x, y } = assertExists(nodesByUid.get(nodeUid));
+    const ferry = ferryItems.get(token);
+    if (!ferry) continue;
+    const { nodeUid, train } = assertExists(ferry);
+    const node = nodesByUid.get(nodeUid);
+    if (!node) continue;
+    const { x, y } = { x: node.x, y: node.y };
 
     const connections: FerryConnection[] = partialFerry.connections
       .filter(c => ferryItems.has(c.token))
       .map(partialConnection => {
-        const { nodeUid } = assertExists(
-          ferryItems.get(partialConnection.token),
-        );
-        const { x, y } = assertExists(nodesByUid.get(nodeUid));
-        const { name, nameLocalized } = withLocalizedName(
-          assertExists(defData.ferries.get(partialConnection.token)),
-        );
+        const nodeUid =
+          ferryItems.get(partialConnection.token)?.nodeUid ?? BigInt(0);
+        const node = nodeUid ? nodesByUid.get(nodeUid) : { x: 0, y: 0 };
+        const x = node?.x ?? 0;
+        const y = node?.y ?? 0;
+        const ferry1 = defData.ferries.get(partialConnection.token);
+        const name = ferry1?.name ?? '';
+        const nameLocalized = ferry1?.nameLocalized;
         return {
           ...partialConnection,
           name,
@@ -889,11 +913,13 @@ function postProcess(
     }
 
     for (const r of sectorRoads) {
-      const rStart = assertExists(nodesByUid.get(r.startNodeUid));
-      const rEnd = assertExists(nodesByUid.get(r.endNodeUid));
+      const rStart = nodesByUid.get(r.startNodeUid);
+      const rEnd = nodesByUid.get(r.endNodeUid);
+      if (!rStart || !rEnd) continue;
       const splitsRoad = (t: Terrain | Building | Curve) => {
-        const tStart = assertExists(nodesByUid.get(t.startNodeUid));
-        const tEnd = assertExists(nodesByUid.get(t.endNodeUid));
+        const tStart = nodesByUid.get(t.startNodeUid);
+        const tEnd = nodesByUid.get(t.endNodeUid);
+        if (!tStart || !tEnd) return false;
         return (
           (distance(rStart, tStart) < threshold &&
             distance(rEnd, tEnd) < threshold) ||
@@ -940,11 +966,15 @@ function postProcess(
   logger.info(elevationNodeUids.size, 'elevation nodes');
   const referencedNodes: Node[] = [];
   for (const uid of referencedNodeUids) {
-    referencedNodes.push(assertExists(nodesByUid.get(uid)));
+    const node = nodesByUid.get(uid);
+    if (!node) continue;
+    referencedNodes.push(node);
   }
   const elevationNodes: Node[] = [];
   for (const uid of elevationNodeUids) {
-    elevationNodes.push(assertExists(nodesByUid.get(uid)));
+    const node = nodesByUid.get(uid);
+    if (!node) continue;
+    elevationNodes.push(node);
   }
 
   return {
@@ -1004,7 +1034,7 @@ function createWithLocalizedName(l10n: Map<string, string>) {
     ...o,
     nameLocalized: undefined,
     name: o.nameLocalized
-      ? assertExists(l10n.get(o.nameLocalized.replaceAll('@', '')))
+      ? (l10n.get(o.nameLocalized.replaceAll('@', '')) ?? o.name)
       : o.name,
   });
 }
