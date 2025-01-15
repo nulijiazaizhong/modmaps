@@ -242,9 +242,61 @@ const SimpleItemStruct = {
     nodes: new r.Array(
       new r.Struct({
         nodeUid: uint64le,
-        nodeFlag: r.uint32le,
       }),
       r.uint32le,
+    ),
+    nodes1: new r.Optional( // repeated six times before 900
+      new r.Array(
+        new r.Struct({
+          nodeUid: uint64le,
+        }),
+        r.uint32le,
+      ),
+      () => versionFormat < 900,
+    ),
+    nodes2: new r.Optional(
+      new r.Array(
+        new r.Struct({
+          nodeUid: uint64le,
+        }),
+        r.uint32le,
+      ),
+      () => versionFormat < 900,
+    ),
+    nodes3: new r.Optional(
+      new r.Array(
+        new r.Struct({
+          nodeUid: uint64le,
+        }),
+        r.uint32le,
+      ),
+      () => versionFormat < 900,
+    ),
+    nodes4: new r.Optional(
+      new r.Array(
+        new r.Struct({
+          nodeUid: uint64le,
+        }),
+        r.uint32le,
+      ),
+      () => versionFormat < 900,
+    ),
+    nodes5: new r.Optional(
+      new r.Array(
+        new r.Struct({
+          nodeUid: uint64le,
+        }),
+        r.uint32le,
+      ),
+      () => versionFormat < 900,
+    ),
+    // new in 900
+    nodeFlags: new r.Optional(
+      new r.Array(
+        r.uint32le,
+        (parent: { nodes: unknown[] }) => parent.nodes.length,
+      ),
+      () => versionFormat > 898,
     ),
     // debugStruct,
   },
@@ -452,8 +504,15 @@ const SimpleItemStruct = {
   },
   [ItemType.TrajectoryItem]: {
     nodeUids: new r.Array(uint64le, r.uint32le),
-    flags1: new r.Optional(r.uint32le, versionFormat < 895),
-    flags2: uint64le,
+    flags1: new r.Optional(r.uint32le, () => {
+      return versionFormat < 895;
+    }),
+    flags2: new r.Optional(uint64le, () => {
+      return versionFormat >= 895;
+    }),
+    accessRule: new r.Optional(token64, () => {
+      return versionFormat < 895;
+    }),
     routeRules: new r.Array(
       new r.Struct({
         node: r.uint32le,
@@ -469,7 +528,12 @@ const SimpleItemStruct = {
       }),
       r.uint32le,
     ),
-    tags: new r.Array(token64, r.uint32le),
+    tags: new r.Optional(new r.Array(token64, r.uint32le), () => {
+      return versionFormat >= 895;
+    }),
+    padding2: new r.Optional(new r.Reserved(r.uint32le), () => {
+      return versionFormat < 895;
+    }),
     // debugStruct,
   },
   [ItemType.MapArea]: {
