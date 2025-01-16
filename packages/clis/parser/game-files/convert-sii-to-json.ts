@@ -1,7 +1,6 @@
-import { Preconditions } from '@truckermudgeon/base/precon';
 import type { JSONSchemaType } from 'ajv';
 import { logger } from '../logger';
-import type { Entries } from './scs-archive';
+import type { Entries, FileEntry } from './scs-archive';
 import { parseSii } from './sii-parser';
 import { ajv } from './sii-schemas';
 import { jsonConverter } from './sii-visitors';
@@ -10,12 +9,11 @@ export function convertSiiToJson<T>(
   siiPath: string,
   entries: Entries,
   schema: JSONSchemaType<T>,
+  siiFile: FileEntry | undefined = undefined,
 ): T {
-  logger.debug('converting', siiPath, 'to json object');
-  const siiFile = Preconditions.checkExists(
-    entries.files.get(siiPath),
-    `${siiPath} does not exist`,
-  );
+  siiFile = siiFile ? siiFile : entries.files.get(siiPath);
+  if (!siiFile) return false as T;
+
   const buffer = siiFile.read();
   let sii = decryptedSii(buffer);
 
@@ -41,27 +39,28 @@ export function convertSiiToJson<T>(
       if (res.parseErrors.length) {
         const line = res.parseErrors[0].token.startLine!;
         const lines = sii.split('\n');
-        logger.error(lines.slice(line - 1, line + 1).join('\n'));
-        logger.error(res.parseErrors);
+        logger.debug(lines.slice(line - 1, line + 1).join('\n'));
+        logger.debug(res.parseErrors);
       } else {
-        logger.error(res.lexErrors);
+        logger.debug(res.lexErrors);
       }
-      throw new Error();
+      return false as T;
     }
 
     const json = jsonConverter.convert(res.cst);
-    if (json['length'] === 0) return false as T;
+    if (Object.keys(json).length === 0) return false as T;
+
     const validate = ajv.compile(schema);
     if (validate(json)) {
       return json;
     }
-    logger.error('error validating', siiPath);
-    console.log(JSON.stringify(json, null, 2));
-    logger.error(ajv.errorsText(validate.errors));
-    throw new Error();
-  } catch {
-    logger.error('error parsing', sii);
-    throw new Error();
+    logger.debug('error validating', siiPath);
+    logger.debug(JSON.stringify(json, null, 2));
+    logger.debug(ajv.errorsText(validate.errors));
+    return false as T;
+  } catch (e) {
+    logger.error('error parsing', sii, e);
+    return false as T;
   }
 }
 
@@ -72,7 +71,7 @@ export function decryptedSii(buffer: Buffer) {
   if (magic === '3nK') {
     // https://github.com/dariowouters/ts-map/blob/e73adad923f60bbbb637dd4642910d1a0b1154e3/TsMap/Helpers/MemoryHelper.cs#L109
     if (buffer.length < 5) {
-      throw new Error();
+      return '';
     }
     let key = buffer.readUint8(5);
     for (let i = 6; i < buffer.length; i++) {

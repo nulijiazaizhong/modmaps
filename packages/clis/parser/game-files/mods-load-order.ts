@@ -9,7 +9,7 @@ export function getLoadOrder() {
   for (const str of strs.split('\n')) {
     if (reg.test(str)) {
       const mod = reg.exec(str)?.[1];
-      if (mod) {
+      if (mod && !mods.includes(mod)) {
         mods.push(mod);
       }
     }

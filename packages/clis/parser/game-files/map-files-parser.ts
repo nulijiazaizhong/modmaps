@@ -1,7 +1,7 @@
-import { assert, assertExists } from '@truckermudgeon/base/assert';
+import { assertExists } from '@truckermudgeon/base/assert';
 import { distance } from '@truckermudgeon/base/geom';
 import { putIfAbsent } from '@truckermudgeon/base/map';
-import { Preconditions, UnreachableError } from '@truckermudgeon/base/precon';
+import { UnreachableError } from '@truckermudgeon/base/precon';
 import {
   ItemType,
   MapOverlayType,
@@ -37,19 +37,15 @@ import path from 'path';
 import { logger } from '../logger';
 import { CombinedEntries } from './combined-entries';
 import { convertSiiToJson } from './convert-sii-to-json';
-import { parseDds } from './dds-parser';
 import { parseDefFiles } from './def-parser';
 import type { Entries } from './scs-archive';
 import { ScsArchive } from './scs-archive';
 import { parseSector } from './sector-parser';
-import {
-  IconMatSchema,
-  LocalizationSiiSchema,
-  VersionSiiSchema,
-} from './sii-schemas';
+import { LocalizationSiiSchema, VersionSiiSchema } from './sii-schemas';
 
 export function parseMapFiles(
-  scsFilePaths: string[],
+  gameFilePaths: string[],
+  modFilePaths: string[],
   {
     onlyDefs,
   }: {
@@ -60,41 +56,100 @@ export function parseMapFiles(
       onlyDefs: false;
       map: string;
       mapData: MapData;
-      icons: Map<string, Buffer>;
     }
   | {
       onlyDefs: true;
       map: string;
       defData: DefData;
     } {
-  const archives = scsFilePaths.map(p => {
+  let version: ReturnType<typeof parseVersionSii>;
+  let l10n = new Map<string, string>();
+  const sectorData: ReturnType<typeof parseSectorFiles> = {
+    map: '',
+    sectors: new Map<
+      string,
+      { items: Map<bigint, Item>; nodes: Map<bigint, Node> }
+    >(),
+  };
+  let defData: ReturnType<typeof parseDefFiles>;
+
+  const gameArchives = gameFilePaths.map(p => {
     logger.log('adding', path.basename(p));
     return ScsArchive(p);
   });
-  const entries = new CombinedEntries(archives);
+  const modArchives = modFilePaths.map(p => {
+    logger.log('adding', path.basename(p));
+    return ScsArchive(p);
+  });
 
   try {
-    const version = parseVersionSii(entries);
-    const defData = parseDefFiles(entries, version.application);
-    const l10n = assertExists(parseLocaleFiles(entries).get('en_us'));
-    if (onlyDefs) {
-      return {
-        onlyDefs: true,
-        map: version.application === 'ats' ? 'usa' : 'europe',
-        defData: toDefData(defData, l10n),
-      };
-    }
+    const gameEntries = new CombinedEntries(gameArchives);
+    const entries = new CombinedEntries(gameArchives.concat(modArchives));
 
-    // const icons = parseIconMatFiles(entries);
-    const icons = new Map<string, Buffer<ArrayBufferLike>>();
-    const sectorData = parseSectorFiles(entries);
-    return {
-      onlyDefs: false,
-      ...postProcess(defData, sectorData, icons, l10n),
-    };
+    version = parseVersionSii(gameEntries);
+    l10n = parseLocaleFiles(gameEntries).get('en_us') ?? l10n;
+
+    defData = parseDefFiles(entries, version.application);
+
+    // parse game files
+    if (!onlyDefs) {
+      const gameData = parseSectorFiles(gameEntries);
+      mergeMapData(gameData, sectorData);
+    }
   } finally {
-    archives.forEach(a => a.dispose());
+    gameArchives.forEach(a => a.dispose());
   }
+
+  // parse mod files
+  let success = 0;
+  let failure = 0;
+  for (const modArchive of modArchives) {
+    logger.log('parsing', path.basename(modArchive.path));
+
+    try {
+      const modEntry = modArchive.parseEntries();
+
+      const modL10n =
+        parseLocaleFiles(modEntry).get('en_us') ?? new Map<string, string>();
+      modL10n.forEach((v, k) => l10n.set(k, v));
+
+      if (!onlyDefs) {
+        const modSectorData = parseSectorFiles(modEntry);
+        mergeMapData(modSectorData, sectorData);
+
+        if (modSectorData.error) {
+          failure++;
+        } else {
+          success++;
+        }
+      }
+    } catch {
+      failure++;
+    } finally {
+      modArchive.dispose();
+    }
+  }
+
+  if (modFilePaths.length > 0)
+    logger.success(
+      'success parsed',
+      `${success} / ${modFilePaths.length}`,
+      'mod files,',
+      `${failure} failed`,
+    );
+
+  if (onlyDefs) {
+    return {
+      onlyDefs: true,
+      map: version.application === 'ats' ? 'usa' : 'europe',
+      defData: toDefData(defData, l10n),
+    };
+  }
+  sectorData.map = version.application === 'ats' ? 'usa' : 'europe';
+  return {
+    onlyDefs: false,
+    ...postProcess(defData, sectorData, l10n),
+  };
 }
 
 function parseVersionSii(entries: Entries) {
@@ -108,27 +163,32 @@ function parseVersionSii(entries: Entries) {
 }
 
 export function parseSectorFiles(entries: Entries) {
-  const mapDir = Preconditions.checkExists(entries.directories.get('map'));
-  const mbds = mapDir.files.filter(f => f.endsWith('.mbd'));
+  const sectors = new Map<
+    string,
+    { items: Map<bigint, Item>; nodes: Map<bigint, Node> }
+  >();
+  const mapDir = entries.directories.get('map');
+  if (!mapDir) return { map: '', sectors };
 
-  const sectors = new Map<string, { items: Item[]; nodes: Node[] }>();
-  for (const mbd of mbds) {
-    const map = mbd.replace(/\.mbd$/, '');
+  let error = false;
+  const maps = mapDir.subdirectories;
+  for (const map of maps) {
     const sectorRoot = entries.directories.get(`map/${map}`);
     if (!sectorRoot) {
       logger.warn('missing sector directory', map);
       continue;
     }
 
-    logger.start(`parsing ${map} sector files...`);
-    const start = Date.now();
-
     const baseFiles = sectorRoot.files.filter(
       f => f.endsWith('.base') || f.endsWith('.aux'),
     );
+    if (baseFiles.length === 0) continue;
+
+    logger.start(`parsing ${map} sector files...`);
+    const start = Date.now();
     const bar = new cliProgress.SingleBar(
       {
-        format: `[{bar}] | {filename} | {value} of {total}`,
+        format: `[{bar}] {percentage}% | {filename} | {value} of {total}`,
         stopOnComplete: true,
         clearOnComplete: true,
       },
@@ -140,35 +200,53 @@ export function parseSectorFiles(entries: Entries) {
     for (const f of baseFiles) {
       const sectorKey = f.replace(/\.(base|aux)$/, '');
       if (!sectorRegex.test(sectorKey)) {
-        throw new Error(`unexpected sector key "${sectorKey}"`);
+        logger.error(`unexpected sector key "${sectorKey}"`);
+        error = true;
+        bar.increment({ filename: f });
+        continue;
       }
       const [, sectorX, sectorY] = Array.from(
         assertExists(sectorRegex.exec(sectorKey)),
         parseFloat,
       );
       if (isNaN(sectorX) || isNaN(sectorY)) {
-        throw new Error(`couldn't parse ${sectorX} or ${sectorY}`);
+        logger.error(`couldn't parse ${sectorX} or ${sectorY}`);
+        error = true;
+        bar.increment({ filename: f });
+        continue;
       }
+
+      const baseFile = entries.files.get(`map/${map}/${f}`);
+      if (!baseFile) {
+        bar.increment({ filename: f });
+        continue;
+      }
+
       const { items, nodes } = putIfAbsent(
         sectorKey,
-        { items: [], nodes: [] },
+        { items: new Map<bigint, Item>(), nodes: new Map<bigint, Node>() },
         sectors,
       );
-      const baseFile = assertExists(entries.files.get(`map/${map}/${f}`));
       try {
-        const sector = parseSector(baseFile.read());
+        const buffer = baseFile.read();
+        const sector = parseSector(buffer);
         if (!sector) {
           bar.increment({ filename: f });
           continue;
         }
-        items.push(...sector.items.map(i => ({ ...i, sectorX, sectorY })));
-        nodes.push(...sector.nodes.map(n => ({ ...n, sectorX, sectorY })));
+
+        sector.items.forEach(item => {
+          items.set(item.uid, { ...item, sectorX, sectorY });
+        });
+        sector.nodes.forEach(item => {
+          nodes.set(item.uid, { ...item, sectorX, sectorY });
+        });
       } catch {
         bar.increment({ filename: f });
-        logger.error(`error parsing sector file...{map/${map}/${f}}`);
+        error = true;
+        logger.error(`error parsing sector file`, `map/${map}/${f}`);
         continue;
       }
-
       bar.increment({ filename: f });
     }
     logger.success(
@@ -182,37 +260,37 @@ export function parseSectorFiles(entries: Entries) {
   }
 
   return {
-    map: 'europe',
+    map: `${maps.join('+')}`,
     sectors,
+    error: error,
   };
 }
 
-function parseLocaleFiles(entries: Entries): Map<string, Map<string, string>> {
-  logger.log('parsing locale files...');
+export function parseLocaleFiles(
+  entries: Entries,
+): Map<string, Map<string, string>> {
   const l10nStrings = new Map<string, Map<string, string>>();
 
   let numKeys = 0;
-  const locale = Preconditions.checkExists(entries.directories.get('locale'));
-  for (const subdir of locale.subdirectories) {
-    const localeSubdir = Preconditions.checkExists(
-      entries.directories.get(`locale/${subdir}`),
-    );
+  const locale = entries.directories.get('locale');
+  if (!locale) return l10nStrings;
+
+  if (locale.subdirectories.includes('en_us')) {
+    logger.log('parsing locale files...');
+    const localeSubdir = entries.directories.get(`locale/en_us`);
+    if (!localeSubdir) return l10nStrings;
+
     const localeMap = putIfAbsent(
-      subdir,
+      'en_us',
       new Map<string, string>(),
       l10nStrings,
     );
     for (const f of localeSubdir.files) {
-      if (
-        f !== 'local.sii' &&
-        f !== 'local.override.sii' &&
-        f !== 'localization.sui' &&
-        f !== 'photoalbum.sui'
-      ) {
+      if (!f.startsWith('local') && f !== 'photoalbum.sui') {
         continue;
       }
       const json = convertSiiToJson(
-        `locale/${subdir}/${f}`,
+        `locale/en_us/${f}`,
         entries,
         LocalizationSiiSchema,
       );
@@ -221,7 +299,7 @@ function parseLocaleFiles(entries: Entries): Map<string, Map<string, string>> {
         continue;
       }
       const { key, val } = l10n;
-      assert(key.length === val.length);
+
       for (let i = 0; i < key.length; i++) {
         localeMap.set(key[i], val[i]);
       }
@@ -234,127 +312,20 @@ function parseLocaleFiles(entries: Entries): Map<string, Map<string, string>> {
   return l10nStrings;
 }
 
-function parseIconMatFiles(entries: Entries) {
-  logger.log('parsing icon .mat files...');
-
-  const endsWithMat = /\.mat$/g;
-  const tobjPaths = new Map<string, string>();
-  const sdfAuxData = new Map<string, number[][]>();
-  const readTobjPathsFromMatFiles = (
-    dir: string,
-    filenameFilter: (filename: string) => boolean = f => f.endsWith('.mat'),
-    replaceAll: RegExp = endsWithMat,
-  ) => {
-    Preconditions.checkArgument(replaceAll.global);
-    const dirEntry = Preconditions.checkExists(entries.directories.get(dir));
-    for (const f of dirEntry.files) {
-      if (!filenameFilter(f)) {
-        continue;
-      }
-      const json = convertSiiToJson(`${dir}/${f}`, entries, IconMatSchema);
-      if (Object.keys(json).length === 0) {
-        continue;
-      }
-      const key = f.replaceAll(replaceAll, '');
-      if (json.effect) {
-        const rfx = assertExists(
-          json.effect['ui.rfx'] ?? json.effect['ui.sdf.rfx'],
-        );
-        tobjPaths.set(key, `${dir}/${rfx.texture.texture.source}`);
-        if (json.effect['ui.sdf.rfx']) {
-          sdfAuxData.set(key, json.effect['ui.sdf.rfx'].aux);
-        }
-      } else if (json.material) {
-        tobjPaths.set(key, `${dir}/${json.material.ui.texture}`);
-      } else {
-        logger.warn(`unknown format for ${dir}/${f}`);
-      }
-    }
-  };
-
-  readTobjPathsFromMatFiles(
-    'material/ui/map/road',
-    f => f.startsWith('road_') && f.endsWith('.mat'),
-    /^road_|\.mat$/g,
-  );
-  readTobjPathsFromMatFiles('material/ui/company/small');
-
-  // hardcoded set of icon names that live in material/ui/map/
-  const otherMatFiles = new Set(
-    [
-      'viewpoint', // for cutscenes (from ItemType.Cutscene)
-      'photo_sight_captured', // for landmarks (from ItemType.MapOverlay, type Landmark)
-      // facilities
-      'parking_ico', // from ItemType.MapOverlay, type Parking; ItemType.Trigger; PrefabDescription TriggerPoints
-      // from PrefabDescription SpawnPoints
-      'gas_ico',
-      'service_ico',
-      'weigh_station_ico',
-      'dealer_ico',
-      'garage_large_ico',
-      'recruitment_ico',
-      // not rendered on map, but useful for Map Legend UI
-      'city_names_ico',
-      'companies_ico',
-      'road_numbers_ico',
-      // these 4 files can be combined to help trace state / country borders
-      // 'map0',
-      // 'map1',
-      // 'map2',
-      // 'map3',
-    ].map(n => `${n}.mat`),
-  );
-  readTobjPathsFromMatFiles('material/ui/map', f => otherMatFiles.has(f));
-
-  const pngs = new Map<string, Buffer>();
-  for (const [key, tobjPath] of tobjPaths) {
-    const tobj = entries.files.get(tobjPath);
-    if (!tobj) {
-      logger.warn('could not find', tobjPath);
-      continue;
-    }
-    // A .tobj file in a HashFs v2 archive is actually a file with header-less
-    // .dds pixel data. Assume that the concrete instance of the FileEntry for
-    // the .tobj file is an ScsArchiveTobjFile, whose .read() returns a complete
-    // header-ful .dds file.
-    pngs.set(key, parseDds(tobj.read(), sdfAuxData.get(key)));
-  }
-  return pngs;
-}
-
-function postProcess(
+export function postProcess(
   defData: ReturnType<typeof parseDefFiles>,
   { sectors, map }: ReturnType<typeof parseSectorFiles>,
-  icons: ReturnType<typeof parseIconMatFiles>,
   l10n: Map<string, string>,
-): { map: string; mapData: MapData; icons: Map<string, Buffer> } {
+): { map: string; mapData: MapData } {
   logger.log('building node and item LUTs...');
-  let sumSectorNodes = 0;
-  let sumSectorItems = 0;
   const nodesByUid = new Map<bigint, Node>();
   const itemsByUid = new Map<bigint, Item>();
   for (const s of sectors.values()) {
-    sumSectorNodes += s.nodes.length;
-    for (const n of s.nodes) {
-      nodesByUid.set(n.uid, n);
-    }
-    sumSectorItems += s.items.length;
-    for (const i of s.items) {
-      itemsByUid.set(i.uid, i);
-    }
+    s.nodes.forEach((v, k) => nodesByUid.set(k, v));
+    s.items.forEach((v, k) => itemsByUid.set(k, v));
   }
-  logger.success(
-    'built',
-    nodesByUid.size,
-    'node LUT entries',
-    `(removed ${sumSectorNodes - nodesByUid.size} dupes)`,
-  );
-  logger.success(
-    'built',
-    itemsByUid.size,
-    'item LUT entries',
-    `(removed ${sumSectorItems - itemsByUid.size} dupes)`,
-  );
+  logger.success('built', nodesByUid.size, 'node LUT entries');
+  logger.success('built', itemsByUid.size, 'item LUT entries');
 
   const referencedNodeUids = new Set<bigint>();
   const elevationNodeUids = new Set<bigint>();
@@ -491,21 +462,13 @@ function postProcess(
   logger.log('scanning', poifulItems.length, 'items for points of interest...');
   const pois: Poi[] = [];
   const companies: CompanyItem[] = [];
-  const noPoiCompanies: {
-    token: string;
-    itemUid: bigint;
-    nodeUid: bigint;
-  }[] = [];
-  const fallbackPoiCompanies: {
-    token: string;
-    itemUid: bigint;
-    nodeUid: bigint;
-  }[] = [];
+
   for (const item of poifulItems) {
     switch (item.type) {
       case ItemType.Prefab: {
         const prefabDescription = defData.prefabs.get(item.token);
         if (!prefabDescription) break;
+
         const prefabMeta = {
           prefabUid: item.uid,
           prefabPath: prefabDescription.path,
@@ -606,13 +569,7 @@ function postProcess(
           case MapOverlayType.Road:
             if (item.token === '') {
               // ignore
-            }
-            // else if (!icons.has(item.token)) {
-            //   logger.warn(
-            //     `unknown road overlay token "${item.token}". skipping.`,
-            //   );
-            // }
-            else {
+            } else {
               // TODO look into ets2 road overlays with token 'weigh_ico'.
               // can they be considered facilities? do they have linked prefabs?
               pois.push({
@@ -672,14 +629,6 @@ function postProcess(
           );
           break;
         }
-        if (!icons.has(item.token)) {
-          noPoiCompanies.push({
-            token: item.token,
-            itemUid: item.uid,
-            nodeUid: item.nodeUid,
-          });
-          break;
-        }
 
         const prefabDescription = defData.prefabs.get(prefabItem.token);
         if (!prefabDescription) break;
@@ -699,14 +648,9 @@ function postProcess(
           );
           ({ sectorX, sectorY } = item);
         } else {
-          fallbackPoiCompanies.push({
-            token: item.token,
-            itemUid: item.uid,
-            nodeUid: item.nodeUid,
-          });
           const node = nodesByUid.get(item.nodeUid);
           if (!node) break;
-          ({ x, y, sectorX, sectorY } = assertExists(node));
+          ({ x, y, sectorX, sectorY } = node);
         }
         const companyName = defData.companies.get(item.token)?.name;
         if (companyName == null) {
@@ -729,7 +673,7 @@ function postProcess(
       case ItemType.Ferry: {
         const node = nodesByUid.get(item.nodeUid);
         if (!node) break;
-        const { x, y, sectorX, sectorY } = assertExists(node);
+        const { x, y, sectorX, sectorY } = node;
         const pos = { x, y, sectorX, sectorY };
         const ferry = defData.ferries.get(item.token);
         if (!ferry) break;
@@ -780,24 +724,7 @@ function postProcess(
         }
         break;
       }
-      default:
-        throw new UnreachableError(item);
     }
-  }
-
-  if (noPoiCompanies.length) {
-    logger.warn(
-      noPoiCompanies.length,
-      'companies with unknown tokens skipped\n',
-      noPoiCompanies.sort((a, b) => a.token.localeCompare(b.token)),
-    );
-  }
-  if (fallbackPoiCompanies.length) {
-    logger.warn(
-      fallbackPoiCompanies.length,
-      'companies with no company spawn points (used node position as fallback)\n',
-      fallbackPoiCompanies.sort((a, b) => a.token.localeCompare(b.token)),
-    );
   }
 
   // Augment partial city info from defs with position info from sectors
@@ -828,19 +755,19 @@ function postProcess(
   for (const [token, partialFerry] of defData.ferries) {
     const ferry = ferryItems.get(token);
     if (!ferry) continue;
-    const { nodeUid, train } = assertExists(ferry);
+
+    const { nodeUid, train } = ferry;
     const node = nodesByUid.get(nodeUid);
     if (!node) continue;
-    const { x, y } = { x: node.x, y: node.y };
 
+    const { x, y } = { x: node.x, y: node.y };
     const connections: FerryConnection[] = partialFerry.connections
       .filter(c => ferryItems.has(c.token))
       .map(partialConnection => {
         const nodeUid =
           ferryItems.get(partialConnection.token)?.nodeUid ?? BigInt(0);
-        const node = nodeUid ? nodesByUid.get(nodeUid) : { x: 0, y: 0 };
-        const x = node?.x ?? 0;
-        const y = node?.y ?? 0;
+        const node = nodesByUid.get(nodeUid);
+        const { x, y } = node ? node : { x: 0, y: 0 };
         const ferry1 = defData.ferries.get(partialConnection.token);
         const name = ferry1?.name ?? '';
         const nameLocalized = ferry1?.nameLocalized;
@@ -876,7 +803,7 @@ function postProcess(
   );
   const bar = new cliProgress.SingleBar(
     {
-      format: `[{bar}] | {key} | {value} of {total}`,
+      format: `[{bar}] {percentage}% | {key} | {value} of {total}`,
       stopOnComplete: true,
       clearOnComplete: true,
     },
@@ -887,7 +814,7 @@ function postProcess(
   for (const [key, { items }] of sectors.entries()) {
     const sectorRoads: Road[] = [];
     const sectorDividers: (Terrain | Building | Curve)[] = [];
-    for (const i of items) {
+    for (const i of items.values()) {
       if (i.type === ItemType.Road) {
         sectorRoads.push(i);
       } else if (i.type === ItemType.Terrain) {
@@ -1006,11 +933,11 @@ function postProcess(
       routes: valuesWithTokens(defData.routes),
       mileageTargets: valuesWithTokens(defData.mileageTargets),
     },
-    icons,
+    // icons,
   };
 }
 
-function toDefData(
+export function toDefData(
   defData: ReturnType<typeof parseDefFiles>,
   l10n: Map<string, string>,
 ) {
@@ -1068,4 +995,20 @@ function checkReference<T>(
       );
     }
   }
+}
+
+function mergeMapData(
+  gameData: ReturnType<typeof parseSectorFiles>,
+  sectorData: ReturnType<typeof parseSectorFiles>,
+) {
+  gameData.sectors.forEach((value, key) => {
+    const sector = sectorData.sectors.get(key);
+
+    if (sector) {
+      value.items.forEach((v, k) => sector.items.set(k, v));
+      value.nodes.forEach((v, k) => sector.nodes.set(k, v));
+    } else {
+      sectorData.sectors.set(key, value);
+    }
+  });
 }

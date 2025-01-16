@@ -1,4 +1,4 @@
-#!/usr/bin/env -S NODE_OPTIONS=--max-old-space-size=8192 npx tsx
+#!/usr/bin/env -S NODE_OPTIONS=--max-old-space-size=16384 npx tsx
 
 import type { DefData, MapData } from '@truckermudgeon/map/types';
 import fs from 'fs';
@@ -56,6 +56,11 @@ function main() {
       type: 'boolean',
       default: false,
     })
+    .option('debug', {
+      describe: 'Set debug mode to print debug message',
+      type: 'boolean',
+      default: false,
+    })
     .parseSync();
 
   const requiredFiles = new Set([
@@ -67,21 +72,24 @@ function main() {
     'locale.scs',
     'version.scs',
   ]);
-  const scsFilePaths = fs
+  if (args.debug) logger.level = 4;
+
+  const gameFilePaths = fs
     .readdirSync(args.gameDir, { withFileTypes: true })
-    .filter(e => e.isFile() && e.name.endsWith('.scs'))
+    .filter(
+      e =>
+        (e.isFile() && e.name.endsWith('.scs') && requiredFiles.has(e.name)) ||
+        (args.includeDlc && e.name.startsWith('dlc')),
+    )
     .map(e => {
       return path.join(args.gameDir, e.name);
-    })
-    .filter(p => {
-      const fn = path.basename(p);
-      return requiredFiles.has(fn) || (args.includeDlc && fn.startsWith('dlc'));
     });
 
+  let modFilePaths: string[] = [];
   if (args.modsDir) {
     const loadOrder = getLoadOrder();
 
-    const modsFilePaths = fs
+    modFilePaths = fs
       .readdirSync(args.modsDir, { withFileTypes: true })
       .filter(
         e =>
@@ -97,29 +105,46 @@ function main() {
           loadOrder.indexOf(path.basename(a).split(path.extname(a))[0]) -
           loadOrder.indexOf(path.basename(b).split(path.extname(b))[0]),
       );
-
-    scsFilePaths.push(...modsFilePaths);
   }
 
-  const { map, ...result } = parseMapFiles(scsFilePaths, args);
+  const { map, ...result } = parseMapFiles(gameFilePaths, modFilePaths, args);
+
   if (args.dryRun) {
     logger.success('dry run complete.');
     return;
   }
 
-  if (!fs.existsSync(args.outputDir)) {
-    fs.mkdirSync(args.outputDir, { recursive: true });
+  if (fs.existsSync(args.outputDir)) {
+    fs.rmSync(args.outputDir, { recursive: true });
   }
+  fs.mkdirSync(args.outputDir, { recursive: true });
 
   const data = result.onlyDefs ? result.defData : result.mapData;
   for (const key of Object.keys(data)) {
     const collection = data[key as keyof (MapData | DefData)];
     const filename = `${map}-${key}.json`;
     logger.log('writing', collection.length, `entries to ${filename}...`);
-    fs.writeFileSync(
-      path.join(args.outputDir, filename),
-      JSON.stringify(collection, null, 2),
-    );
+
+    const ws = fs.createWriteStream(path.join(args.outputDir, filename), {
+      flags: 'a+',
+    });
+    try {
+      for (let start = 0; start < collection.length; start += 32768) {
+        let str = JSON.stringify(
+          collection.slice(start, start + 32768),
+          null,
+          2,
+        );
+
+        if (start !== 0) str = ',' + str.substring(1);
+        if (start + 32768 < collection.length)
+          str = str.substring(0, str.length - 1);
+
+        ws.write(str);
+      }
+    } finally {
+      ws.end();
+    }
   }
 
   // const pngOutputDir = path.join(args.outputDir, 'icons');

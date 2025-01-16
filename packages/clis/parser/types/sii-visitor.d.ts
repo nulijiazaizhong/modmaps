@@ -104,7 +104,6 @@ export type WrappedSiiCstChildren = {
   LCurly: IToken[];
   includeDirective?: IncludeDirectiveCstNode[];
   object?: ObjectCstNode[];
-  WhiteSpace?: IToken[];
   RCurly: IToken[];
 };
 

@@ -22,7 +22,7 @@ const Property = createToken({
   name: 'Property',
   // This is starting to get unwieldy :-/.
   // The negative lookahead for `x` is to ensure HexLiterals can be parsed.
-  pattern: /([a-zA-Z0-9_.]+)|((0(?!x))?[1-9]+[a-z_.]+[a-z0-9_.]+)/,
+  pattern: /([äöüÄÖÜßa-zA-Z0-9_.-]+)|((0(?!x))?[1-9]+[a-z_.]+[a-z0-9_.]+)/,
 });
 const NilLiteral = createToken({
   name: 'Nil',
@@ -58,8 +58,17 @@ const Comment = createToken({
   pattern: /(\/\/|#).*/,
   group: Lexer.SKIPPED,
 });
+const BlockComment = createToken({
+  name: 'BlockComment',
+  pattern: /\/\*[\s\S]*?\*\//,
+  line_breaks: true,
+  group: Lexer.SKIPPED,
+});
 
 const allTokens = [
+  WhiteSpace,
+  BlockComment,
+  Comment,
   SiiNunit,
   LCurly,
   RCurly,
@@ -76,8 +85,6 @@ const allTokens = [
   BinaryFloat,
   HexLiteral,
   Property,
-  WhiteSpace,
-  Comment,
 ];
 
 const SiiLexer = new Lexer(allTokens);
@@ -156,7 +163,6 @@ class SiiParser extends CstParser {
       this.OR([
         { ALT: () => this.SUBRULE(this.includeDirective) },
         { ALT: () => this.SUBRULE(this.object) },
-        { ALT: () => this.CONSUME(WhiteSpace) },
       ]);
     });
     this.CONSUME(RCurly);
