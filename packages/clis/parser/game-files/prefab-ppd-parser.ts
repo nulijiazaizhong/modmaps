@@ -1,6 +1,7 @@
 import { normalizeRadians } from '@truckermudgeon/base/geom';
 import { MapAreaColor } from '@truckermudgeon/map/constants';
 import type { MapPoint, PrefabDescription } from '@truckermudgeon/map/types';
+import type { BaseOf } from 'restructure';
 import * as r from 'restructure';
 import { logger } from '../logger';
 import { float3, float4, token64 } from './restructure-helpers';
@@ -8,6 +9,8 @@ import { float3, float4, token64 } from './restructure-helpers';
 // based on:
 // https://github.com/dariowouters/ts-map/blob/master/docs/structures/ppd-template.bt
 // https://github.com/SCSSoftware/BlenderTools/blob/master/addon/io_scs_tools/consts.py
+
+let ppdVersion = 24;
 
 const Prefab = new r.Struct({
   version: r.uint32le,
@@ -22,7 +25,7 @@ const Prefab = new r.Struct({
   numMapPoints: r.uint32le,
   numTriggerPoints: r.uint32le,
   numIntersections: r.uint32le,
-  numNavNodes: r.uint32le,
+  numNavNodes: new r.Optional(r.uint32le, ppdVersion >= 22),
 
   nodes: new r.Pointer(
     r.uint32le,
@@ -107,7 +110,7 @@ const Prefab = new r.Struct({
         rot: float4,
         type: r.uint32le,
         // new in v24. maybe related to new loading mechanic in Nebraska?
-        unknown: new r.Reserved(r.uint32le),
+        unknown: new r.Optional(new r.Reserved(r.uint32le), ppdVersion >= 24),
       }),
       'numSpawnPoints',
     ),
@@ -196,29 +199,36 @@ const Prefab = new r.Struct({
       'numIntersections',
     ),
   ),
-  navNodes: new r.Pointer(
-    r.uint32le,
-    new r.Array(
-      new r.Struct({
-        type: new r.Enum(r.uint8, ['physical', 'ai']),
-        // if type is physical: the index of the normal node (see nodes array) this navNode ends at.
-        // if type is ai: the index of the AI curve this navNode ends at.
-        index: r.uint16le,
-        connectionCount: r.uint8,
-        // connections to other nav nodes
-        connections: new r.Array(
-          new r.Struct({
-            // target navNode index
-            targetNode: r.uint16le,
-            length: r.floatle,
-            curveIndicesCount: r.uint8,
-            curveIndices: new r.Array(r.uint16le, 8),
-          }),
-          8,
-        ), // note: this 8 differs from docs at http://modding.scssoft.com/wiki/Games/ETS2/Modding_guides/1.30#Prefabs, which says it's 4.
-      }),
-      'numNavNodes',
+  // new in 22
+  navNodes: new r.Optional(
+    new r.Pointer(
+      r.uint32le,
+      new r.Array(
+        new r.Struct({
+          type: new r.Enum(r.uint8, ['physical', 'ai']),
+          // if type is physical: the index of the normal node (see nodes array) this navNode ends at.
+          // if type is ai: the index of the AI curve this navNode ends at.
+          index: r.uint16le,
+          connectionCount: r.uint8,
+          // connections to other nav nodes
+          connections: new r.Array(
+            new r.Struct({
+              // target navNode index
+              targetNode: r.uint16le,
+              length: r.floatle,
+              curveIndicesCount: r.uint8,
+              curveIndices: new r.Array(r.uint16le, 8),
+            }),
+            () => {
+              return ppdVersion > 22 ? 8 : 4;
+            },
+          ), // note: this 8 differs from docs at http://modding.scssoft.com/wiki/Games/ETS2/Modding_guides/1.30#Prefabs, which says it's 4.
+          // 4 in 22 and 8 after
+        }),
+        'numNavNodes',
+      ),
     ),
+    ppdVersion >= 22,
   ),
 });
 
@@ -277,12 +287,16 @@ const roadOffsetToOffset = {
   7: 25,
 };
 
+const versionWarnings = new Set<number>();
+
 export function parsePrefabPpd(buffer: Buffer): PrefabDescription {
-  // const version = buffer.readUint32LE();
-  // if (version !== 24) {
-  //   logger.error('unknown .ppd file version', version);
-  //   throw new Error();
-  // }
+  ppdVersion = buffer.readUint32LE();
+  if (ppdVersion < 24) {
+    if (!versionWarnings.has(ppdVersion)) {
+      logger.warn('older .ppd file version', ppdVersion);
+      versionWarnings.add(ppdVersion);
+    }
+  }
   const rawPrefab = Prefab.fromBuffer(buffer);
 
   // TODO verify check. should it be against roadPoints?
@@ -424,22 +438,25 @@ export function parsePrefabPpd(buffer: Buffer): PrefabDescription {
         prevLines: rc.prevLines.slice(0, countPrev),
       };
     }),
-    navNodes: rawPrefab.navNodes.map(rn => {
-      const { type, index: endIndex, connectionCount } = rn;
-      return {
-        type: type as 'physical' | 'ai',
-        endIndex,
-        connections: rn.connections
-          .map(rc => {
-            const { curveIndicesCount, targetNode: targetNavNodeIndex } = rc;
-            return {
-              targetNavNodeIndex,
-              curveIndices: rc.curveIndices.slice(0, curveIndicesCount),
-            };
-          })
-          .slice(0, connectionCount),
-      };
-    }),
+    navNodes: rawPrefab.navNodes
+      ? rawPrefab.navNodes.map(rn => {
+          const { type, index: endIndex, connectionCount } = rn;
+          return {
+            type: type as 'physical' | 'ai',
+            endIndex,
+            connections: rn.connections
+              .map(rc => {
+                const { curveIndicesCount, targetNode: targetNavNodeIndex } =
+                  rc;
+                return {
+                  targetNavNodeIndex,
+                  curveIndices: rc.curveIndices.slice(0, curveIndicesCount),
+                };
+              })
+              .slice(0, connectionCount),
+          };
+        })
+      : (false as BaseOf<typeof rawPrefab.navNodes>),
     //signs: rawPrefab.signs,
     //semaphores: rawPrefab.semaphores,
   };
