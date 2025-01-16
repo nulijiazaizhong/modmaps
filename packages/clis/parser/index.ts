@@ -34,6 +34,12 @@ function main() {
       type: 'string',
       coerce: untildify,
     })
+    .option('gameLog', {
+      alias: 'l',
+      describe: 'Path to game log file (game.log.txt)',
+      type: 'string',
+      coerce: untildify,
+    })
     .option('outputDir', {
       alias: 'o',
       describe: 'Path to dir JSON and PNG files should be written to',
@@ -57,7 +63,7 @@ function main() {
       default: false,
     })
     .option('debug', {
-      describe: 'Set debug mode to print debug message',
+      describe: 'Set debug mode to print more message',
       type: 'boolean',
       default: false,
     })
@@ -85,26 +91,26 @@ function main() {
       return path.join(args.gameDir, e.name);
     });
 
+  const modLoadOrder = args.gameLog ? getLoadOrder(args.gameLog) : [];
+
   let modFilePaths: string[] = [];
   if (args.modsDir) {
-    const loadOrder = getLoadOrder();
-
     modFilePaths = fs
       .readdirSync(args.modsDir, { withFileTypes: true })
       .filter(
-        e =>
-          e.isFile() &&
-          (e.name.endsWith('.scs') || e.name.endsWith('.zip')) &&
-          loadOrder.includes(
-            path.basename(e.name).split(path.extname(e.name))[0],
-          ),
+        e => e.isFile() && (e.name.endsWith('.scs') || e.name.endsWith('.zip')),
       )
-      .map(e => path.join(args.modsDir!, e.name))
-      .sort(
-        (a, b) =>
-          loadOrder.indexOf(path.basename(a).split(path.extname(a))[0]) -
-          loadOrder.indexOf(path.basename(b).split(path.extname(b))[0]),
-      );
+      .map(e => path.join(args.modsDir!, e.name));
+
+    if (modLoadOrder.length > 0) {
+      modFilePaths = modFilePaths
+        .filter(e => modLoadOrder.includes(path.parse(e).name))
+        .sort(
+          (a, b) =>
+            modLoadOrder.indexOf(path.parse(a).name) -
+            modLoadOrder.indexOf(path.parse(b).name),
+        );
+    }
   }
 
   const { map, ...result } = parseMapFiles(gameFilePaths, modFilePaths, args);

@@ -1,8 +1,7 @@
 ﻿import fs from 'fs';
 
-export function getLoadOrder() {
-  const LogFile = 'D:\\我的文档\\Euro Truck Simulator 2\\game.log.txt';
-  const strs = fs.readFileSync(LogFile, { encoding: 'utf8' });
+export function getLoadOrder(path: string) {
+  const strs = fs.readFileSync(path, { encoding: 'utf8' });
   const mods: string[] = [];
   const reg = new RegExp('.*\\[mods] Active local mod (.*) \\(name:.*', 'i');
 
