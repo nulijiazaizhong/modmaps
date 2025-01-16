@@ -46,14 +46,15 @@ export class CombinedEntries implements Entries {
         const entries = this.archives
           .map(a => a.parseEntries().files.get(key))
           .filter(e => e != null);
-        if (entries.length > 1) {
-          logger.debug(
-            `multiple files found for ${key}; using most recent one.`,
-          );
-        }
         return entries.length ? entries.at(-1) : undefined;
       },
     };
+  }
+  // get all files
+  getAllFiles(key: string) {
+    return this.archives
+      .map(a => a.parseEntries().files.get(key))
+      .filter(e => e != null);
   }
 }
 
