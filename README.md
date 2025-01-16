@@ -1,3 +1,46 @@
+# Modified parser
+
+This is a modified parser of [TruckSim Maps](https://github.com/truckermudgeon/maps)'s parser project.
+
+Now it can parse and export third-party mod map data, support HashFsV1/HashFsV2/zip format.
+
+## How to use
+
+```shell
+npx parser -g pathToGameDirectory -m pathToModDirectory -o dirToWriteFilesTo
+```
+
+### Options
+
+| Short option    | Long option  | Default value | Description                                                       |
+| --------------- | ------------ | ------------- | ----------------------------------------------------------------- |
+| -g              | --gameDir    | None          | Path to ATS/ETS2 game dir (the one with all the .scs files)       |
+| -m              | --modsDir    | None          | Path to ATS/ETS2 mods dir (the one with all the mods files)       |
+| -l              | --gameLog    | None          | Path to game log file (game.log.txt), used to read mod load order |
+| -o              | --outputDir  | None          | Path to dir JSON files should be written to                       |
+| (Not available) | --includeDlc | True          | Whether include DLC files or not                                  |
+| (Not available) | --onlyDefs   | False         | Parse data from /def files, only                                  |
+| (Not available) | --dryRun     | False         | Don't write out any files                                         |
+| (Not available) | --debug      | False         | Set debug mode to print more messages                             |
+
+## Compatibility
+
+Tested with OrangeLion889's [ETS 2 Promods Based Global RoEx Map combo & load order](https://sites.google.com/view/orangelion889mapcombos/ets-2-map-combos/ets-2-promods-based-global-roex-map-combo-load-order)
+
+## Credits
+
+Zip file parse code from:
+
+- [sk-zk / Extractor](https://github.com/sk-zk/Extractor)
+
+Older map format compatible code from:
+
+- [sk-zk / map-docs](https://github.com/sk-zk/map-docs/wiki)
+- [sk-zk / TruckLib](https://github.com/sk-zk/TruckLib)
+- [dariowouters / ts-map](https://github.com/dariowouters/ts-map)
+
+---
+
 # TruckSim Maps
 
 TruckSim Maps is a collection of tools and components for building web-based maps for
