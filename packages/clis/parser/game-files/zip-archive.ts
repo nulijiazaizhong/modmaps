@@ -1,4 +1,5 @@
 import { assert } from '@truckermudgeon/base/assert';
+import { putIfAbsent } from '@truckermudgeon/base/map';
 import { Preconditions } from '@truckermudgeon/base/precon';
 import fs from 'fs';
 import path from 'path';
@@ -51,18 +52,22 @@ const CentralDirectoryFileHeader = new r.Struct({
 });
 
 class ZipReader {
-  public offset: number;
   private readonly fd: number;
   public readonly fileSize: number;
+  private __offset: number;
 
   constructor(readonly path: string) {
     this.fd = fs.openSync(path, 'r');
     this.fileSize = fs.statSync(this.path).size;
-    this.offset = 0;
+    this.__offset = 0;
   }
 
-  Seek(position: number) {
-    this.offset = position;
+  get offset(): number {
+    return this.__offset;
+  }
+
+  set offset(position: number) {
+    this.__offset = position;
   }
 
   SeekOffset(length: number) {
@@ -109,14 +114,20 @@ export class ZipArchive {
   private readonly eocdRecord;
   private readonly endOfCentralDirOffset: number = -1;
   private entries: Entries | undefined;
+  private readonly isPLrebuild: boolean = false;
+  private readonly isDlcSupport: boolean = false;
 
   constructor(readonly path: string) {
+    // Poland rebuild def file has difference directory tree
+    if (/.*PL_Rebuilding.*def.*/.test(path)) this.isPLrebuild = true;
+    // promods dlc support file has difference directory tree
+    if (path.includes('dlcsupport')) this.isDlcSupport = true;
     this.reader = new ZipReader(path);
 
     this.endOfCentralDirOffset = this.FindEndHeaderOffset();
     assert(this.endOfCentralDirOffset >= 0);
 
-    this.reader.Seek(this.endOfCentralDirOffset + 4);
+    this.reader.offset = this.endOfCentralDirOffset + 4;
     const buffer = this.reader.ReadBytes(EndOfCentralDirectory.size());
     this.eocdRecord = EndOfCentralDirectory.fromBuffer(buffer);
     this.eocdRecord.comment = this.reader
@@ -134,7 +145,7 @@ export class ZipArchive {
       return this.entries;
     }
 
-    this.reader.Seek(this.eocdRecord.centralDirectoryOffset);
+    this.reader.offset = this.eocdRecord.centralDirectoryOffset;
     const entries: r.BaseOf<typeof CentralDirectoryFileHeader>[] = [];
 
     while (
@@ -157,6 +168,13 @@ export class ZipArchive {
       entries.push(file);
     }
 
+    if (this.isPLrebuild || this.isDlcSupport) {
+      for (const entry of entries) {
+        if (entry.fileName.includes('/')) {
+          entry.fileName = entry.fileName.split('/').slice(1).join('/');
+        }
+      }
+    }
     const directoryTree = createDirectoryTree(entries);
     const directories: DirectoryEntry[] = [];
     const files: FileEntry[] = [];
@@ -193,6 +211,7 @@ export class ZipArchive {
           entry.fileName.lastIndexOf('/'),
         );
       }
+
       const zipEntry = createEntry(this.reader, entry, directoryTree);
       if (zipEntry.type === 'directory') {
         directories.push(zipEntry);
@@ -212,7 +231,7 @@ export class ZipArchive {
     const fileSize = this.reader.fileSize;
     assert(fileSize > 0);
     const maxEndSize = Math.min(22 + 0xffff, fileSize); // END header size + max zip file comment length < fileSize
-    this.reader.Seek(fileSize - maxEndSize);
+    this.reader.offset = fileSize - maxEndSize;
     const buffer = this.reader.ReadBytes(maxEndSize);
 
     let index = buffer.length - 22;
@@ -253,7 +272,7 @@ abstract class ZipArchiveEntry {
   }
 
   read() {
-    this.reader.Seek(this.entry.localFileHeaderOffset + 26);
+    this.reader.offset = this.entry.localFileHeaderOffset + 26;
     const fileNameLength = this.reader.ReadUInt16LE();
     const extraFieldLength = this.reader.ReadUInt16LE();
     this.reader.SeekOffset(fileNameLength + extraFieldLength);
@@ -305,13 +324,10 @@ class ZipArchiveDirectory extends ZipArchiveEntry implements DirectoryEntry {
   ) {
     super(reader, entry);
 
-    if (directoryTree.has(entry.fileName)) {
-      // eslint-disable-next-line
-      // @ts-ignore
-      this.subdirectories = directoryTree.get(entry.fileName).subdirectories;
-      // eslint-disable-next-line
-      // @ts-ignore
-      this.files = directoryTree.get(entry.fileName).files;
+    const child = directoryTree.get(entry.fileName);
+    if (child) {
+      this.subdirectories = child.subdirectories;
+      this.files = child.files;
     } else {
       this.subdirectories = [];
       this.files = [];
@@ -334,14 +350,11 @@ function createDirectoryTree(
     if (parent === '.') {
       parent = '';
     }
-    if (!directoryTree.has(parent)) {
-      const newChild = new DirectoryTree();
-      directoryTree.set(parent, newChild);
-    }
+    const parentDir = putIfAbsent(parent, new DirectoryTree(), directoryTree);
     if (entry.uncompressedSize > 0) {
-      directoryTree.get(parent)?.files.push(child);
-    } else {
-      directoryTree.get(parent)?.subdirectories.push(child);
+      parentDir.files.push(child);
+    } else if (!parentDir.subdirectories.includes(child)) {
+      parentDir.subdirectories.push(child);
     }
   }
 
