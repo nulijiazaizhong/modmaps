@@ -120,10 +120,9 @@ function main() {
     return;
   }
 
-  if (fs.existsSync(args.outputDir)) {
-    fs.rmSync(args.outputDir, { recursive: true });
+  if (!fs.existsSync(args.outputDir)) {
+    fs.mkdirSync(args.outputDir, { recursive: true });
   }
-  fs.mkdirSync(args.outputDir, { recursive: true });
 
   const data = result.onlyDefs ? result.defData : result.mapData;
   for (const key of Object.keys(data)) {
@@ -131,8 +130,10 @@ function main() {
     const filename = `${map}-${key}.json`;
     logger.log('writing', collection.length, `entries to ${filename}...`);
 
-    const ws = fs.createWriteStream(path.join(args.outputDir, filename), {
-      flags: 'a+',
+    const filePath = path.join(args.outputDir, filename);
+    fs.rmSync(filePath, { recursive: true, force: true });
+    const ws = fs.createWriteStream(filePath, {
+      flags: 'a',
     });
     try {
       for (let start = 0; start < collection.length; start += 32768) {
@@ -153,17 +154,17 @@ function main() {
     }
   }
 
-  // const pngOutputDir = path.join(args.outputDir, 'icons');
-  // if (!result.onlyDefs) {
-  //   const { icons } = result;
-  //   logger.log('writing', icons.size, `.png files to ${pngOutputDir}...`);
-  //   if (!fs.existsSync(pngOutputDir)) {
-  //     fs.mkdirSync(pngOutputDir);
-  //   }
-  //   for (const [name, buffer] of icons) {
-  //     fs.writeFileSync(path.join(pngOutputDir, name + '.png'), buffer);
-  //   }
-  // }
+  const pngOutputDir = path.join(args.outputDir, 'icons');
+  if (!result.onlyDefs) {
+    const { icons } = result;
+    logger.log('writing', icons.size, `.png files to ${pngOutputDir}...`);
+    if (!fs.existsSync(pngOutputDir)) {
+      fs.mkdirSync(pngOutputDir);
+    }
+    for (const [name, buffer] of icons) {
+      fs.writeFileSync(path.join(pngOutputDir, name + '.png'), buffer);
+    }
+  }
 
   logger.success('done.');
 }

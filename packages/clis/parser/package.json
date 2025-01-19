@@ -33,6 +33,7 @@
     "node-addon-api": "^7.0.0",
     "pngjs": "^7.0.0",
     "restructure": "^3.0.0",
+    "tex-decoder": "^1.0.17",
     "tsx": "^4.7.0",
     "yargs": "^17.7.2"
   }

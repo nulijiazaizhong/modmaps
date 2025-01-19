@@ -37,11 +37,16 @@ import path from 'path';
 import { logger } from '../logger';
 import { CombinedEntries } from './combined-entries';
 import { convertSiiToJson } from './convert-sii-to-json';
+import { parseDds } from './dds-parser';
 import { parseDefFiles } from './def-parser';
 import type { Entries } from './scs-archive';
-import { ScsArchive } from './scs-archive';
+import { ScsArchive, ScsArchiveFileV2 } from './scs-archive';
 import { parseSector } from './sector-parser';
-import { LocalizationSiiSchema, VersionSiiSchema } from './sii-schemas';
+import {
+  IconMatSchema,
+  LocalizationSiiSchema,
+  VersionSiiSchema,
+} from './sii-schemas';
 
 export function parseMapFiles(
   gameFilePaths: string[],
@@ -56,6 +61,7 @@ export function parseMapFiles(
       onlyDefs: false;
       map: string;
       mapData: MapData;
+      icons: Map<string, Buffer>;
     }
   | {
       onlyDefs: true;
@@ -64,6 +70,7 @@ export function parseMapFiles(
     } {
   let version: ReturnType<typeof parseVersionSii>;
   let l10n = new Map<string, string>();
+  let icons: ReturnType<typeof parseIconMatFiles> = new Map<string, Buffer>();
   const sectorData: ReturnType<typeof parseSectorFiles> = {
     map: '',
     sectors: new Map<
@@ -93,6 +100,8 @@ export function parseMapFiles(
 
     // parse game files
     if (!onlyDefs) {
+      icons = parseIconMatFiles(entries);
+
       const gameData = parseSectorFiles(gameEntries);
       mergeMapData(gameData, sectorData);
     }
@@ -148,7 +157,7 @@ export function parseMapFiles(
   sectorData.map = version.application === 'ats' ? 'usa' : 'europe';
   return {
     onlyDefs: false,
-    ...postProcess(defData, sectorData, l10n),
+    ...postProcess(defData, sectorData, icons, l10n),
   };
 }
 
@@ -312,11 +321,119 @@ export function parseLocaleFiles(
   return l10nStrings;
 }
 
+export function parseIconMatFiles(entries: Entries) {
+  logger.log('parsing icon .mat files...');
+
+  const endsWithMat = /\.(mat|dds)$/g;
+  const tobjPaths = new Map<string, string>();
+  const sdfAuxData = new Map<string, number[][]>();
+  const readTobjPathsFromMatFiles = (
+    dir: string,
+    filenameFilter: (filename: string) => boolean = f =>
+      f.endsWith('.mat') || f.endsWith('.dds'),
+    replaceAll: RegExp = endsWithMat,
+  ) => {
+    const dirEntry = entries.directories.get(dir);
+
+    if (!dirEntry) return;
+
+    for (const f of dirEntry.files) {
+      if (!filenameFilter(f)) {
+        continue;
+      }
+
+      const key = f.replaceAll(replaceAll, '');
+
+      if (
+        f.endsWith('.mat') &&
+        entries.files.get(f) instanceof ScsArchiveFileV2
+      ) {
+        const json = convertSiiToJson(`${dir}/${f}`, entries, IconMatSchema);
+        if (Object.keys(json).length === 0) {
+          continue;
+        }
+        if (json.effect) {
+          const rfx = json.effect['ui.rfx'] ?? json.effect['ui.sdf.rfx'];
+          if (!rfx) continue;
+          tobjPaths.set(key, `${dir}/${rfx.texture.texture.source}`);
+          if (json.effect['ui.sdf.rfx']) {
+            sdfAuxData.set(key, json.effect['ui.sdf.rfx'].aux);
+          }
+        } else if (json.material) {
+          tobjPaths.set(key, `${dir}/${json.material.ui.texture}`);
+        } else {
+          logger.warn(`unknown format for ${dir}/${f}`);
+        }
+      }
+      // some mods have different name between .mat and .dds
+      else if (f.endsWith('.dds')) {
+        if (!tobjPaths.has(key)) tobjPaths.set(key, `${dir}/${f}`);
+      }
+    }
+  };
+
+  readTobjPathsFromMatFiles(
+    'material/ui/map/road',
+    f => f.startsWith('road_') && (f.endsWith('.mat') || f.endsWith('.dds')),
+    /^road_|\.(mat|dds)$/g,
+  );
+  readTobjPathsFromMatFiles('material/ui/company/small');
+
+  // hardcoded set of icon names that live in material/ui/map/
+  const otherMatFiles = new Set(
+    [
+      'viewpoint', // for cutscenes (from ItemType.Cutscene)
+      'photo_sight_captured', // for landmarks (from ItemType.MapOverlay, type Landmark)
+      // facilities
+      'parking_ico', // from ItemType.MapOverlay, type Parking; ItemType.Trigger; PrefabDescription TriggerPoints
+      // from PrefabDescription SpawnPoints
+      'gas_ico',
+      'service_ico',
+      'weigh_station_ico',
+      'dealer_ico',
+      'garage_large_ico',
+      'recruitment_ico',
+      // not rendered on map, but useful for Map Legend UI
+      'city_names_ico',
+      'companies_ico',
+      'road_numbers_ico',
+      // these 4 files can be combined to help trace state / country borders
+      // 'map0',
+      // 'map1',
+      // 'map2',
+      // 'map3',
+    ].map(n => `${n}.mat`),
+  );
+  readTobjPathsFromMatFiles('material/ui/map', f => otherMatFiles.has(f));
+
+  const pngs = new Map<string, Buffer>();
+  for (const [key, tobjPath] of tobjPaths) {
+    const tobj = entries.files.get(tobjPath);
+    if (!tobj) {
+      logger.warn('could not find', tobjPath);
+      continue;
+    }
+    // A .tobj file in a HashFs v2 archive is actually a file with header-less
+    // .dds pixel data. Assume that the concrete instance of the FileEntry for
+    // the .tobj file is an ScsArchiveTobjFile, whose .read() returns a complete
+    // header-ful .dds file.
+    const DdsBuffer = parseDds(tobj.read(), sdfAuxData.get(key));
+    if (DdsBuffer) {
+      pngs.set(key, DdsBuffer);
+    } else {
+      logger.error(`error parsing ${tobjPath}`);
+    }
+  }
+  logger.info('parsed', pngs.size, 'icons');
+  return pngs;
+}
+
 export function postProcess(
   defData: ReturnType<typeof parseDefFiles>,
   { sectors, map }: ReturnType<typeof parseSectorFiles>,
+  icons: ReturnType<typeof parseIconMatFiles>,
   l10n: Map<string, string>,
-): { map: string; mapData: MapData } {
+): { map: string; mapData: MapData; icons: Map<string, Buffer> } {
   logger.log('building node and item LUTs...');
   const nodesByUid = new Map<bigint, Node>();
   const itemsByUid = new Map<bigint, Item>();
@@ -403,7 +520,7 @@ export function postProcess(
         break;
       case ItemType.Company:
         checkReference(item.nodeUid, nodesByUid, 'nodeUid', item);
-        // checkReference(item.token, icons, 'company token', item);
+        checkReference(item.token, icons, 'company token', item);
         // disable this line when not processing every state; gets noisy otherwise.
         checkReference(item.cityToken, defData.cities, 'city token', item);
         referencedNodeUids.add(item.nodeUid);
@@ -462,6 +579,16 @@ export function postProcess(
   logger.log('scanning', poifulItems.length, 'items for points of interest...');
   const pois: Poi[] = [];
   const companies: CompanyItem[] = [];
+  const noPoiCompanies: {
+    token: string;
+    itemUid: bigint;
+    nodeUid: bigint;
+  }[] = [];
+  const fallbackPoiCompanies: {
+    token: string;
+    itemUid: bigint;
+    nodeUid: bigint;
+  }[] = [];
 
   for (const item of poifulItems) {
     switch (item.type) {
@@ -569,6 +696,10 @@ export function postProcess(
           case MapOverlayType.Road:
             if (item.token === '') {
               // ignore
+            } else if (!icons.has(item.token)) {
+              logger.warn(
+                `unknown road overlay token "${item.token}". skipping.`,
+              );
             } else {
               // TODO look into ets2 road overlays with token 'weigh_ico'.
               // can they be considered facilities? do they have linked prefabs?
@@ -629,6 +760,14 @@ export function postProcess(
           );
           break;
         }
+        if (!icons.has(item.token)) {
+          noPoiCompanies.push({
+            token: item.token,
+            itemUid: item.uid,
+            nodeUid: item.nodeUid,
+          });
+          break;
+        }
 
         const prefabDescription = defData.prefabs.get(prefabItem.token);
         if (!prefabDescription) break;
@@ -648,6 +787,11 @@ export function postProcess(
           );
           ({ sectorX, sectorY } = item);
         } else {
+          fallbackPoiCompanies.push({
+            token: item.token,
+            itemUid: item.uid,
+            nodeUid: item.nodeUid,
+          });
           const node = nodesByUid.get(item.nodeUid);
           if (!node) break;
           ({ x, y, sectorX, sectorY } = node);
@@ -724,7 +868,24 @@ export function postProcess(
         }
         break;
       }
+      default:
+        logger.error('unknown item type', item);
     }
+  }
+
+  if (noPoiCompanies.length) {
+    logger.warn(
+      noPoiCompanies.length,
+      'companies with unknown tokens skipped\n',
+      noPoiCompanies.sort((a, b) => a.token.localeCompare(b.token)),
+    );
+  }
+  if (fallbackPoiCompanies.length) {
+    logger.warn(
+      fallbackPoiCompanies.length,
+      'companies with no company spawn points (used node position as fallback)\n',
+      fallbackPoiCompanies.sort((a, b) => a.token.localeCompare(b.token)),
+    );
   }
 
   // Augment partial city info from defs with position info from sectors
@@ -933,11 +1094,11 @@ export function postProcess(
       routes: valuesWithTokens(defData.routes),
       mileageTargets: valuesWithTokens(defData.mileageTargets),
     },
-    // icons,
+    icons,
   };
 }
 
-export function toDefData(
+function toDefData(
   defData: ReturnType<typeof parseDefFiles>,
   l10n: Map<string, string>,
 ) {

@@ -6,7 +6,11 @@ import type { BaseOf } from 'restructure';
 import * as r from 'restructure';
 import zlib from 'zlib';
 import { logger } from '../logger';
-import { DdsHeader } from './dds-parser';
+import { DdsHeader, DdsHeaderDX10 } from './dds-parser';
+import {
+  D3d10ResourceDimension,
+  D3d10ResourceMiscFlag,
+} from './enum-dds-format';
 import { MappedNumber, uint64le } from './restructure-helpers';
 import { ScsArchiveV1 } from './scs-archive-V1';
 import { ZipArchive } from './zip-archive';
@@ -146,24 +150,6 @@ export interface Entries {
   directories: Store<DirectoryEntry>;
   files: Store<FileEntry>;
 }
-
-// export function HashFsArchive(path: string) {
-//   const fd = fs.openSync(path, 'r');
-//
-//   try {
-//     const buffer = Buffer.alloc(Version.size());
-//     fs.readSync(fd, buffer, { length: buffer.length });
-//     const fileType = Version.fromBuffer(buffer);
-//
-//     if (fileType.version === 1) {
-//       return new ScsArchiveV1(path);
-//     } else {
-//       return new ScsArchiveV2(path);
-//     }
-//   } finally {
-//     fs.closeSync(fd);
-//   }
-// }
 
 export function ScsArchive(path: string) {
   const fd = fs.openSync(path, 'r');
@@ -491,7 +477,7 @@ abstract class ScsArchiveEntryV2 {
   }
 }
 
-class ScsArchiveFileV2 extends ScsArchiveEntryV2 implements FileEntry {
+export class ScsArchiveFileV2 extends ScsArchiveEntryV2 implements FileEntry {
   readonly type = 'file';
 
   constructor(fd: number, metadata: EntryV2Metadata) {
@@ -510,42 +496,9 @@ class ScsArchiveTobjFile extends ScsArchiveFileV2 {
 
   override read() {
     const imageMeta = this.imageMetadata.image;
-    const imageFormat = imageMeta.format;
 
-    let ddsBytes: Buffer;
-    let { width, height } = this.imageMetadata;
-    if (imageFormat === 78) {
-      // BC3_UNORM_SRGB
-      const firstMipmapBytes = width * height;
-      ddsBytes = super.read().subarray(0, firstMipmapBytes);
-    } else if (imageFormat === 91 || imageFormat === 88) {
-      // 91: B8G8R8A8_UNORM_SRGB
-      // 88: B8G8R8X8_UNORM
-
-      // fudge widths/heights. seems to fix problem with ETS2's sr_e763 icon.
-      width = closestPowerOf2(this.imageMetadata.width);
-      height = closestPowerOf2(this.imageMetadata.height);
-
-      ddsBytes = Buffer.alloc(4 * width * height);
-      const rawData = super.read();
-      // Is there a nicer way to figure out pitch?
-      const factor = Math.ceil(rawData.length / ddsBytes.length);
-      for (let i = 0; i < height; i++) {
-        if (i * 4 * width * factor > rawData.length) {
-          // some image data seems to be incomplete, or pitch is
-          // incorrect. abort copying of image data instead of erroring out.
-          break;
-        }
-        rawData.copy(
-          ddsBytes,
-          i * 4 * width,
-          i * 4 * width * factor,
-          (i + 1) * 4 * width * factor,
-        );
-      }
-    } else {
-      throw new Error('unknown image format ' + imageFormat);
-    }
+    const ddsBytes = super.read();
+    const { width, height } = this.imageMetadata;
 
     // Values here are the bare minimum to get DDS via parseDds to work.
     const header = Buffer.from(
@@ -560,12 +513,9 @@ class ScsArchiveTobjFile extends ScsArchiveFileV2 {
         reserved1: undefined,
         ddsPixelFormat: {
           size: 32,
-          flags: 0,
+          flags: 0x4,
           // this looks like the only field of import.
-          fourCc:
-            imageFormat === 91 || imageFormat === 88
-              ? '\x00\x00\x00\x00'
-              : 'DXT5',
+          fourCc: 'DX10',
           rgbBitCount: 0,
           rBitMask: 0,
           gBitMask: 0,
@@ -580,23 +530,32 @@ class ScsArchiveTobjFile extends ScsArchiveFileV2 {
       }),
     );
 
+    const headerDX10 = Buffer.from(
+      DdsHeaderDX10.toBuffer({
+        dxgiFormat: this.imageMetadata.image.format,
+        resourceDimension: D3d10ResourceDimension.Texture2d,
+        miscFlag: this.imageMetadata.image.isCube
+          ? D3d10ResourceMiscFlag.TextureCube
+          : 0,
+        arraySize: 1,
+        miscFlags2: 0,
+      }),
+    );
+
     const ddsFile = Buffer.alloc(
       4 + // magic
         DdsHeader.size() +
+        DdsHeaderDX10.size() +
         ddsBytes.length,
     );
 
     ddsFile.write('DDS ');
     header.copy(ddsFile, 4);
-    ddsBytes.copy(ddsFile, 4 + DdsHeader.size());
+    headerDX10.copy(ddsFile, 128);
+    ddsBytes.copy(ddsFile, 4 + DdsHeader.size() + DdsHeaderDX10.size());
 
     return ddsFile;
   }
-}
-
-function closestPowerOf2(n: number): number {
-  const lg = Math.floor(Math.log2(n));
-  return Math.pow(2, lg);
 }
 
 class ScsArchiveDirectoryV2
