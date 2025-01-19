@@ -25,7 +25,7 @@ npx parser -g pathToGameDirectory -m pathToModDirectory -o dirToWriteFilesTo
 
 ## Compatibility
 
-Tested with OrangeLion889's [ETS 2 Promods Based Global RoEx Map combo & load order](https://sites.google.com/view/orangelion889mapcombos/ets-2-map-combos/ets-2-promods-based-global-roex-map-combo-load-order)
+Tested with OrangeLion889's [ETS 2 Promods Based Global RoEx Map combo(1.52 Archive)](https://sites.google.com/view/orangelion889mapcombos/ets-2-map-combos/ets-2-promods-based-global-roex-map-combo-load-order/pm-roex-archives/pm-roex-archive-1-52)
 
 ## Credits
 
