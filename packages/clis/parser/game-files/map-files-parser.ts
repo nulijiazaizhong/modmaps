@@ -346,7 +346,7 @@ export function parseIconMatFiles(entries: Entries) {
 
       if (
         f.endsWith('.mat') &&
-        entries.files.get(f) instanceof ScsArchiveFileV2
+        entries.files.get(`${dir}/${f}`) instanceof ScsArchiveFileV2
       ) {
         const json = convertSiiToJson(`${dir}/${f}`, entries, IconMatSchema);
         if (Object.keys(json).length === 0) {
