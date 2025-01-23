@@ -324,17 +324,15 @@ export function parseLocaleFiles(
 export function parseIconMatFiles(entries: Entries) {
   logger.log('parsing icon .mat files...');
 
-  const endsWithMat = /\.(mat|dds)$/g;
+  const endsWithMat = /\.mat$/g;
   const tobjPaths = new Map<string, string>();
   const sdfAuxData = new Map<string, number[][]>();
   const readTobjPathsFromMatFiles = (
     dir: string,
-    filenameFilter: (filename: string) => boolean = f =>
-      f.endsWith('.mat') || f.endsWith('.dds'),
+    filenameFilter: (filename: string) => boolean = f => f.endsWith('.mat'),
     replaceAll: RegExp = endsWithMat,
   ) => {
     const dirEntry = entries.directories.get(dir);
-
     if (!dirEntry) return;
 
     for (const f of dirEntry.files) {
@@ -342,40 +340,46 @@ export function parseIconMatFiles(entries: Entries) {
         continue;
       }
 
+      const json = convertSiiToJson(`${dir}/${f}`, entries, IconMatSchema);
+      if (Object.keys(json).length === 0) {
+        continue;
+      }
       const key = f.replaceAll(replaceAll, '');
+      if (json.effect) {
+        const rfx = json.effect['ui.rfx'] ?? json.effect['ui.sdf.rfx'];
+        if (!rfx) continue;
 
-      if (
-        f.endsWith('.mat') &&
-        entries.files.get(`${dir}/${f}`) instanceof ScsArchiveFileV2
-      ) {
-        const json = convertSiiToJson(`${dir}/${f}`, entries, IconMatSchema);
-        if (Object.keys(json).length === 0) {
-          continue;
-        }
-        if (json.effect) {
-          const rfx = json.effect['ui.rfx'] ?? json.effect['ui.sdf.rfx'];
-          if (!rfx) continue;
+        if (entries.files.get(`${dir}/${f}`) instanceof ScsArchiveFileV2) {
           tobjPaths.set(key, `${dir}/${rfx.texture.texture.source}`);
-          if (json.effect['ui.sdf.rfx']) {
-            sdfAuxData.set(key, json.effect['ui.sdf.rfx'].aux);
-          }
-        } else if (json.material) {
+        } else {
+          tobjPaths.set(
+            key,
+            `${dir}/${rfx.texture.texture.source.replace('.tobj', '.dds')}`,
+          );
+        }
+
+        if (json.effect['ui.sdf.rfx']) {
+          sdfAuxData.set(key, json.effect['ui.sdf.rfx'].aux);
+        }
+      } else if (json.material) {
+        if (entries.files.get(`${dir}/${f}`) instanceof ScsArchiveFileV2) {
           tobjPaths.set(key, `${dir}/${json.material.ui.texture}`);
         } else {
-          logger.warn(`unknown format for ${dir}/${f}`);
+          tobjPaths.set(
+            key,
+            `${dir}/${json.material.ui.texture.replace('.tobj', '.dds')}`,
+          );
         }
-      }
-      // some mods have different name between .mat and .dds
-      else if (f.endsWith('.dds')) {
-        if (!tobjPaths.has(key)) tobjPaths.set(key, `${dir}/${f}`);
+      } else {
+        logger.warn(`unknown format for ${dir}/${f}`);
       }
     }
   };
 
   readTobjPathsFromMatFiles(
     'material/ui/map/road',
-    f => f.startsWith('road_') && (f.endsWith('.mat') || f.endsWith('.dds')),
-    /^road_|\.(mat|dds)$/g,
+    f => f.startsWith('road_') && f.endsWith('.mat'),
+    /^road_|\.mat$/g,
   );
   readTobjPathsFromMatFiles('material/ui/company/small');
 

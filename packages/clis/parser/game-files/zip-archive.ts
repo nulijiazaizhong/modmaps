@@ -154,8 +154,9 @@ export class ZipArchive {
         this.eocdRecord.centralDirectorySize
     ) {
       const signature = this.reader.ReadUInt32LE();
-      assert(signature === Signature.CentralDirectoryFileHeader);
-
+      if (signature !== Signature.CentralDirectoryFileHeader) {
+        break;
+      }
       const buffer = this.reader.ReadBytes(CentralDirectoryFileHeader.size());
       const file = CentralDirectoryFileHeader.fromBuffer(buffer);
 
