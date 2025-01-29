@@ -27,15 +27,15 @@ const EntryHeaderV1 = new r.Struct({
 });
 
 export class ScsArchiveV1 {
-  private readonly fd: number;
   private readonly header;
   private entries: Entries | undefined;
 
-  constructor(readonly path: string) {
-    this.fd = fs.openSync(path, 'r');
-
+  constructor(
+    readonly fd: number,
+    readonly path: string,
+  ) {
     const buffer = Buffer.alloc(FileHeaderV1.size());
-    fs.readSync(this.fd, buffer, { length: buffer.length });
+    fs.readSync(this.fd, buffer, { length: buffer.length, position: 0 });
     this.header = FileHeaderV1.fromBuffer(buffer);
   }
 

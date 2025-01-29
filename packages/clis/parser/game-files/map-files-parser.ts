@@ -71,7 +71,7 @@ export function parseMapFiles(
   let version: ReturnType<typeof parseVersionSii>;
   let l10n = new Map<string, string>();
   let icons: ReturnType<typeof parseIconMatFiles> = new Map<string, Buffer>();
-  const sectorData: ReturnType<typeof parseSectorFiles> = {
+  let sectorData: ReturnType<typeof parseSectorFiles> = {
     map: '',
     sectors: new Map<
       string,
@@ -100,10 +100,10 @@ export function parseMapFiles(
 
     // parse game files
     if (!onlyDefs) {
-      icons = parseIconMatFiles(entries);
+      // TODO: find a solution to handle icons with same name between different mods
+      icons = parseIconMatFiles(gameEntries);
 
-      const gameData = parseSectorFiles(gameEntries);
-      mergeMapData(gameData, sectorData);
+      sectorData = parseSectorFiles(gameEntries);
     }
   } finally {
     gameArchives.forEach(a => a.dispose());
@@ -123,8 +123,12 @@ export function parseMapFiles(
       modL10n.forEach((v, k) => l10n.set(k, v));
 
       if (!onlyDefs) {
+        const modIcons = parseIconMatFiles(modEntry);
+        // TODO: find a solution to handle icons with same name between different mods
+        modIcons.forEach((v, k) => icons.set(k, v));
+
         const modSectorData = parseSectorFiles(modEntry);
-        mergeMapData(modSectorData, sectorData);
+        modSectorData.sectors.forEach((v, k) => sectorData.sectors.set(k, v));
 
         if (modSectorData.error) {
           failure++;
@@ -345,11 +349,12 @@ export function parseIconMatFiles(entries: Entries) {
         continue;
       }
       const key = f.replaceAll(replaceAll, '');
+      const fileEntry = entries.files.get(`${dir}/${f}`);
       if (json.effect) {
         const rfx = json.effect['ui.rfx'] ?? json.effect['ui.sdf.rfx'];
         if (!rfx) continue;
 
-        if (entries.files.get(`${dir}/${f}`) instanceof ScsArchiveFileV2) {
+        if (fileEntry instanceof ScsArchiveFileV2) {
           tobjPaths.set(key, `${dir}/${rfx.texture.texture.source}`);
         } else {
           tobjPaths.set(
@@ -362,7 +367,7 @@ export function parseIconMatFiles(entries: Entries) {
           sdfAuxData.set(key, json.effect['ui.sdf.rfx'].aux);
         }
       } else if (json.material) {
-        if (entries.files.get(`${dir}/${f}`) instanceof ScsArchiveFileV2) {
+        if (fileEntry instanceof ScsArchiveFileV2) {
           tobjPaths.set(key, `${dir}/${json.material.ui.texture}`);
         } else {
           tobjPaths.set(
@@ -428,7 +433,7 @@ export function parseIconMatFiles(entries: Entries) {
       logger.error(`error parsing ${tobjPath}`);
     }
   }
-  logger.info('parsed', pngs.size, 'icons');
+  if (pngs.size > 0) logger.info('parsed', pngs.size, 'icons');
   return pngs;
 }
 
@@ -1160,20 +1165,4 @@ function checkReference<T>(
       );
     }
   }
-}
-
-function mergeMapData(
-  gameData: ReturnType<typeof parseSectorFiles>,
-  sectorData: ReturnType<typeof parseSectorFiles>,
-) {
-  gameData.sectors.forEach((value, key) => {
-    const sector = sectorData.sectors.get(key);
-
-    if (sector) {
-      value.items.forEach((v, k) => sector.items.set(k, v));
-      value.nodes.forEach((v, k) => sector.nodes.set(k, v));
-    } else {
-      sectorData.sectors.set(key, value);
-    }
-  });
 }

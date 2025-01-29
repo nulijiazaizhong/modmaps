@@ -52,12 +52,13 @@ const CentralDirectoryFileHeader = new r.Struct({
 });
 
 class ZipReader {
-  private readonly fd: number;
   public readonly fileSize: number;
   private __offset: number;
 
-  constructor(readonly path: string) {
-    this.fd = fs.openSync(path, 'r');
+  constructor(
+    readonly fd: number,
+    readonly path: string,
+  ) {
     this.fileSize = fs.statSync(this.path).size;
     this.__offset = 0;
   }
@@ -117,12 +118,15 @@ export class ZipArchive {
   private readonly isPLrebuild: boolean = false;
   private readonly isDlcSupport: boolean = false;
 
-  constructor(readonly path: string) {
+  constructor(
+    readonly fd: number,
+    readonly path: string,
+  ) {
     // Poland rebuild def file has difference directory tree
     if (/.*PL_Rebuilding.*def.*/.test(path)) this.isPLrebuild = true;
     // promods dlc support file has difference directory tree
     if (path.includes('dlcsupport')) this.isDlcSupport = true;
-    this.reader = new ZipReader(path);
+    this.reader = new ZipReader(fd, path);
 
     this.endOfCentralDirOffset = this.FindEndHeaderOffset();
     assert(this.endOfCentralDirOffset >= 0);

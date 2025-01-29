@@ -154,31 +154,27 @@ export interface Entries {
 export function ScsArchive(path: string) {
   const fd = fs.openSync(path, 'r');
 
-  try {
-    const buffer = Buffer.alloc(Version.size());
-    fs.readSync(fd, buffer, { length: buffer.length });
-    const fileType = Version.fromBuffer(buffer);
+  const buffer = Buffer.alloc(Version.size());
+  fs.readSync(fd, buffer, { length: buffer.length, position: 0 });
+  const fileType = Version.fromBuffer(buffer);
 
-    if (fileType.magic === 'SCS#' && fileType.version === 1) {
-      return new ScsArchiveV1(path);
-    } else if (fileType.magic === 'SCS#' && fileType.version === 2) {
-      return new ScsArchiveV2(path);
-    } else {
-      return new ZipArchive(path);
-    }
-  } finally {
-    fs.closeSync(fd);
+  if (fileType.magic === 'SCS#' && fileType.version === 1) {
+    return new ScsArchiveV1(fd, path);
+  } else if (fileType.magic === 'SCS#' && fileType.version === 2) {
+    return new ScsArchiveV2(fd, path);
+  } else {
+    return new ZipArchive(fd, path);
   }
 }
 
 export class ScsArchiveV2 {
-  private readonly fd: number;
   private readonly header;
   private entries: Entries | undefined;
 
-  constructor(readonly path: string) {
-    this.fd = fs.openSync(path, 'r');
-
+  constructor(
+    readonly fd: number,
+    readonly path: string,
+  ) {
     const buffer = Buffer.alloc(FileHeaderV2.size());
     fs.readSync(this.fd, buffer, { length: buffer.length });
     this.header = FileHeaderV2.fromBuffer(buffer);

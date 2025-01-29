@@ -132,6 +132,7 @@ class SiiParser extends CstParser {
       { ALT: () => this.SUBRULE(this.numberAuxTuple) },
     ]);
   });
+  // TODO: fix error when property have no value
   readonly objectProperty = this.RULE('objectProperty', () => {
     this.CONSUME2(Property);
     this.OPTION(() => this.SUBRULE(this.objectPropertyIndex));
