@@ -1,4 +1,4 @@
-#!/usr/bin/env -S NODE_OPTIONS=--max-old-space-size=16384 npx tsx
+#!/usr/bin/env -S NODE_OPTIONS=--max-old-space-size=32768 npx tsx
 
 import type { DefData, MapData } from '@truckermudgeon/map/types';
 import fs from 'fs';

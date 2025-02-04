@@ -89,10 +89,12 @@ const SimpleItemStruct = {
     // in the versioned struct keys below, as the keys get
     // merged during decoding.
     uid: uint64le,
-    pos: float3,
-    posR: float3,
-    rot: float3,
-    padding: new r.Reserved(r.floatle, 1),
+    // pos: float3,
+    // posR: float3,
+    // rot: float3,
+    // padding: new r.Reserved(r.floatle, 1),
+    KDOPMinimums: new r.Array(r.floatle, 5),
+    KDOPMaximums: new r.Array(r.floatle, 5),
     flags: r.uint32le,
     viewDistance: r.uint8,
     // uncomment this to get console output of the above item headers.
@@ -780,8 +782,10 @@ function toBaseItem<T extends SectorItemKey>(
   return {
     uid: rawItem.uid,
     type: rawItem.version,
-    x: rawItem.pos[0],
-    y: rawItem.pos[2],
+    // x: rawItem.pos[0],
+    // y: rawItem.pos[2],
+    x: (rawItem.KDOPMinimums[0] + rawItem.KDOPMaximums[0]) / 2,
+    y: (rawItem.KDOPMinimums[2] + rawItem.KDOPMaximums[2]) / 2,
   };
 }
 
