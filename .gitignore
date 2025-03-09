@@ -2,6 +2,7 @@
 /out
 node_modules
 build
+coverage
 
 # generated files used by web apps
 packages/apps/*/public/*.geojson
@@ -13,5 +14,7 @@ packages/apps/*/public/sprites*.*
 npm-debug.log*
 tsconfig.tsbuildinfo
 .eslintcache
+*storybook.log
+/packages/clis/parser/test.ts
 /data/
 /packages/clis/parser/log.txt

@@ -40,9 +40,9 @@ export function convertSiiToJson<T>(
         const line = res.parseErrors[0].token.startLine!;
         const lines = sii.split('\n');
         logger.debug(lines.slice(line - 1, line + 1).join('\n'));
-        logger.debug(res.parseErrors);
+        logger.debug('parseErrors: ', res.parseErrors);
       } else {
-        logger.debug(res.lexErrors);
+        logger.debug('lexErrors: ', res.lexErrors);
       }
       return false as T;
     }

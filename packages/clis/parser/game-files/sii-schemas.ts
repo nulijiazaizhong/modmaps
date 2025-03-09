@@ -110,7 +110,7 @@ const numberQuadruple = fixedLengthArray(number, 4);
 const stringArray = arrayOf(string);
 const localeToken = stringPattern(/^.*$/);
 const token = {
-  ...stringPattern(/^[0-9a-z_]{1,12}$/),
+  ...stringPattern(/^[.\w]+$/),
   // ETS2 has some country and city names (e.g. Hungary, Odense) as capitalized
   // tokens. Lowercase them so they're valid tokens.
   transform: ['toLowerCase'],
@@ -550,7 +550,7 @@ export interface CitySii {
 
 export const CitySiiSchema: JSONSchemaType<CitySii> = object({
   cityData: patternRecord(
-    /^city\.[\wäöüÄÖÜß]+$/,
+    /^city\.[.\wäöüÄÖÜßÇ]+$/,
     {
       cityName: string,
       cityNameLocalized: nullable(localeToken),
@@ -694,7 +694,7 @@ export const ModelSiiSchema: JSONSchemaType<ModelSii> = object(
   {
     modelDef: nullable(
       patternRecord(
-        /^model\.\w+$/,
+        /^model\.[.\w]+$/,
         {
           modelDesc: nullable(string),
           vegetationModel: nullable(string),

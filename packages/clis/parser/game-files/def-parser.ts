@@ -438,12 +438,12 @@ function processCityJson(obj: CitySii) {
     return;
   }
   const entries = Object.entries(obj.cityData);
-  if (entries.length !== 1) {
-    throw new Error();
-  }
+  // if (entries.length !== 1) {
+  //   throw new Error();
+  // }
   const [token, rawCity] = entries[0];
   return {
-    token: token.split('.')[1],
+    token: token.replace('city.', ''),
     name: rawCity.cityName,
     nameLocalized: rawCity.cityNameLocalized,
     countryToken: rawCity.country,
@@ -635,7 +635,10 @@ function processPrefabJson(
 
   const prefabTuples = Object.entries(prefabModel).map(
     ([key, o]) =>
-      [key.split('.')[1], o.prefabDesc.substring(1)] as [string, string],
+      [key.replace('prefab.', ''), o.prefabDesc.substring(1)] as [
+        string,
+        string,
+      ],
   );
   const prefabs = new Map<string, PrefabDescription & { path: string }>();
   for (const [token, path] of prefabTuples) {
@@ -699,7 +702,7 @@ function processModelJson(
   );
   const modelTuples = Object.entries(modelDef).map(
     ([key, o]) =>
-      [key.split('.')[1], o.modelDesc?.substring(1)] as [
+      [key.replace('model.', ''), o.modelDesc?.substring(1)] as [
         string,
         string | undefined,
       ],

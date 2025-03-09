@@ -17,6 +17,7 @@ const untildify = (path: string) =>
 
 function main() {
   const args = yargs(hideBin(process.argv))
+    .wrap(yargs().terminalWidth()) // Use full width of wide terminals.
     .usage(
       'Parses ATS/ETS2 game data and mods data and outputs map JSON and PNG files.\n',
     )

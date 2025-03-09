@@ -161,10 +161,15 @@ export function readMapData<T extends 'usa' | 'europe'>(
     toJsonFilePath('countries.json'),
     country => countryTokens.has(country.token),
   );
-  const nodes = readArrayFile<Node>(
-    toJsonFilePath('nodes.json'),
+  const nodes1 = readArrayFile<Node>(
+    toJsonFilePath('nodes-1.json'),
     focusXYPlus(1000),
   );
+  const nodes2 = readArrayFile<Node>(
+    toJsonFilePath('nodes-2.json'),
+    focusXYPlus(1000),
+  );
+  const nodes = nodes1.concat(nodes2);
   const roads = readArrayFile<Road>(
     toJsonFilePath('roads.json'),
     r => (includeHidden ? true : !r.hidden) && focusXY(r),
