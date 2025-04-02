@@ -1,5 +1,4 @@
 import { assert } from '@truckermudgeon/base/assert';
-import { putIfAbsent } from '@truckermudgeon/base/map';
 import { Preconditions } from '@truckermudgeon/base/precon';
 import fs from 'fs';
 import path from 'path';
@@ -184,38 +183,37 @@ export class ZipArchive {
     const directories: DirectoryEntry[] = [];
     const files: FileEntry[] = [];
 
-    const topEntry = {
-      versionMadeBy: 0,
-      versionNeeded: 0,
-      flags: 0,
-      compressedMethod: 0,
-      fileModificationTime: 0,
-      fileModificationDate: 0,
-      crc32: 0,
-      compressedSize: 0,
-      uncompressedSize: 0,
-      fileNameLength: 0,
-      extraFieldLength: 0,
-      fileCommentLength: 0,
-      diskNr: 0,
-      internalAttribs: 0,
-      externalAttribs: 0,
-      localFileHeaderOffset: 0,
-      fileName: '',
-      fileComment: '',
-    } as r.BaseOf<typeof CentralDirectoryFileHeader>;
-    const topDirEntry = createEntry(this.reader, topEntry, directoryTree);
-    if (topDirEntry.type === 'directory') {
-      directories.push(topDirEntry);
+    // create dir entry manually to fix incomplete entries
+    for (const key of directoryTree.keys()) {
+      const entry = {
+        versionMadeBy: 0,
+        versionNeeded: 0,
+        flags: 0,
+        compressedMethod: 0,
+        fileModificationTime: 0,
+        fileModificationDate: 0,
+        crc32: 0,
+        compressedSize: 0,
+        uncompressedSize: 0,
+        fileNameLength: 0,
+        extraFieldLength: 0,
+        fileCommentLength: 0,
+        diskNr: 0,
+        internalAttribs: 0,
+        externalAttribs: 0,
+        localFileHeaderOffset: 0,
+        fileName: key,
+        fileComment: '',
+      } as r.BaseOf<typeof CentralDirectoryFileHeader>;
+
+      const dirEntry = createEntry(this.reader, entry, directoryTree);
+      if (dirEntry.type === 'directory') {
+        directories.push(dirEntry);
+      }
     }
 
     for (const entry of entries) {
-      if (entry.fileName.endsWith('/')) {
-        entry.fileName = entry.fileName.substring(
-          0,
-          entry.fileName.lastIndexOf('/'),
-        );
-      }
+      if (entry.uncompressedSize === 0) continue;
 
       const zipEntry = createEntry(this.reader, entry, directoryTree);
       if (zipEntry.type === 'directory') {
@@ -355,7 +353,7 @@ function createDirectoryTree(
     if (parent === '.') {
       parent = '';
     }
-    const parentDir = putIfAbsent(parent, new DirectoryTree(), directoryTree);
+    const parentDir = getParentDir(parent, new DirectoryTree(), directoryTree);
     if (entry.uncompressedSize > 0) {
       parentDir.files.push(child);
     } else if (!parentDir.subdirectories.includes(child)) {
@@ -364,6 +362,28 @@ function createDirectoryTree(
   }
 
   return directoryTree;
+}
+
+function getParentDir(
+  key: string,
+  defValue: DirectoryTree,
+  map: Map<string, DirectoryTree>,
+) {
+  let parent = path.dirname(key);
+  const child = path.basename(key);
+  if (parent === '.') parent = '';
+  if (child !== '') {
+    const parentDir = getParentDir(parent, new DirectoryTree(), map);
+    if (!parentDir.subdirectories.includes(child))
+      parentDir.subdirectories.push(child);
+  }
+
+  let V = map.get(key);
+  if (V == null) {
+    V = defValue;
+    map.set(key, V);
+  }
+  return V;
 }
 
 class DirectoryTree {
