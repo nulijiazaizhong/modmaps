@@ -136,7 +136,8 @@ export function parseMapFiles(
           success++;
         }
       }
-    } catch {
+    } catch (e) {
+      logger.error(e);
       failure++;
     } finally {
       modArchive.dispose();
