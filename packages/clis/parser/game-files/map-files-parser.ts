@@ -103,7 +103,7 @@ export function parseMapFiles(
       // TODO: find a solution to handle icons with same name between different mods
       icons = parseIconMatFiles(gameEntries);
 
-      sectorData = parseSectorFiles(gameEntries);
+      sectorData = parseSectorFiles(gameEntries, version.application);
     }
   } finally {
     gameArchives.forEach(a => a.dispose());
@@ -127,7 +127,7 @@ export function parseMapFiles(
         // TODO: find a solution to handle icons with same name between different mods
         modIcons.forEach((v, k) => icons.set(k, v));
 
-        const modSectorData = parseSectorFiles(modEntry);
+        const modSectorData = parseSectorFiles(modEntry, version.application);
         modSectorData.sectors.forEach((v, k) => sectorData.sectors.set(k, v));
 
         if (modSectorData.error) {
@@ -176,20 +176,31 @@ function parseVersionSii(entries: Entries) {
   return { application, version };
 }
 
-export function parseSectorFiles(entries: Entries) {
+export function parseSectorFiles(
+  entries: Entries,
+  application: 'ats' | 'eut2',
+) {
   const sectors = new Map<
     string,
     { items: Map<bigint, Item>; nodes: Map<bigint, Node> }
   >();
   const mapDir = entries.directories.get('map');
-  if (!mapDir) return { map: '', sectors };
+  let maps;
+  // some hashfs files don't have root path, try to search "map/europe" / "map/usa"
+  if (mapDir) {
+    maps = mapDir.subdirectories;
+  } else if (application === 'eut2') {
+    maps = ['europe'];
+  } else if (application === 'ats') {
+    maps = ['usa'];
+  } else {
+    return { map: '', sectors };
+  }
 
   let error = false;
-  const maps = mapDir.subdirectories;
   for (const map of maps) {
     const sectorRoot = entries.directories.get(`map/${map}`);
     if (!sectorRoot) {
-      logger.warn('missing sector directory', map);
       continue;
     }
 
@@ -308,6 +319,8 @@ export function parseLocaleFiles(
         entries,
         LocalizationSiiSchema,
       );
+      if (!json) continue;
+
       const l10n = json.localizationDb['.localization'];
       if (Object.keys(l10n).length === 0) {
         continue;
