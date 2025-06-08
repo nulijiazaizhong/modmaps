@@ -17,7 +17,7 @@ import type {
 } from '@truckermudgeon/map/types';
 import { normalizeDlcGuards } from '../dlc-guards';
 import { logger } from '../logger';
-import type { MappedData } from '../mapped-data';
+import type { MapDataKeys, MappedDataForKeys } from '../mapped-data';
 import { createNormalizeFeature } from './normalize';
 
 interface Point {
@@ -25,7 +25,26 @@ interface Point {
   dlcGuard: number;
 }
 
-export function convertToAchievementsGeoJson(tsMapData: MappedData) {
+export const achievementsMapDataKeys = [
+  'achievements',
+  'cities',
+  'companies',
+  'countries',
+  'cutscenes',
+  'ferries',
+  'mapAreas',
+  'nodes',
+  'pois',
+  'prefabs',
+  'roads',
+  'routes',
+  'trajectories',
+  'triggers',
+] satisfies MapDataKeys;
+
+type AchievementsMapData = MappedDataForKeys<typeof achievementsMapDataKeys>;
+
+export function convertToAchievementsGeoJson(tsMapData: AchievementsMapData) {
   const {
     map,
     nodes,
@@ -80,7 +99,7 @@ export function convertToAchievementsGeoJson(tsMapData: MappedData) {
     if (!company) {
       return;
     }
-    const node = assertExists(nodes.get(company.nodeUid.toString(16)));
+    const node = assertExists(nodes.get(company.nodeUid));
     return {
       coordinates: node,
       dlcGuard: getDlcGuard(node),
@@ -165,7 +184,7 @@ export function convertToAchievementsGeoJson(tsMapData: MappedData) {
       // TODO use other points in Trigger to draw a circle or polygon
       const firstNodeUid =
         item.type === ItemType.Trigger ? item.nodeUids[0] : item.nodeUid;
-      const node = assertExists(nodes.get(firstNodeUid.toString(16)));
+      const node = assertExists(nodes.get(firstNodeUid));
       return {
         coordinates: node,
         dlcGuard: getDlcGuard(item),
@@ -309,9 +328,11 @@ export function convertToAchievementsGeoJson(tsMapData: MappedData) {
       const points: Point[] = [];
       switch (a.type) {
         case 'visitCityData':
-          points.push(
-            ...a.cities.filter(t => cities.has(t)).map(cityTokenToPoint),
-          );
+          if (a.cities) {
+            points.push(              
+              ...a.cities.filter(t => cities.has(t)).map(cityTokenToPoint),
+            );
+          }
           break;
         case 'delivery':
           points.push(...deliveryAchievementToPoints(a));
