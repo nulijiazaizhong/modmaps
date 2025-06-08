@@ -158,7 +158,7 @@ export interface BaseAchievementsSii {
   achievementVisitCityData: Record<
     string,
     {
-      cities: string[];
+      cities?: string[];
       achievementName: string;
     }
   >;
@@ -269,9 +269,10 @@ const baseAchievementsProperties = {
   achievementVisitCityData: patternRecord(
     /^\.achievement\.[a-z]{2}_visit_[a-z]{3}$/,
     {
-      cities: stringArray,
+      cities: nullable(stringArray),
       achievementName: string,
     },
+    ['achievementName']
   ),
   achievementDeliveryLogData: patternRecord(
     /^\.achievement\.[0-9a-z_]{1,12}$/,
