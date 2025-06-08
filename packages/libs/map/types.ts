@@ -183,7 +183,7 @@ export type Poi = LabeledPoi | UnlabeledPoi;
 export type Achievement = Readonly<
   | {
       type: 'visitCityData';
-      cities: readonly string[];
+      cities?: readonly string[];
     }
   | {
       type: 'delivery';
