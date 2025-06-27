@@ -458,7 +458,17 @@ export function parsePrefabPpd(buffer: Buffer): PrefabDescription {
         })
       : (false as BaseOf<typeof rawPrefab.navNodes>),
     //signs: rawPrefab.signs,
-    //semaphores: rawPrefab.semaphores,
+    semaphores: rawPrefab.semaphores ? rawPrefab.semaphores.map(rs => {
+      const { pos, rot, type, id, intervals, cycle } = rs;
+      return {
+        x: pos[0],
+        y: pos[2],
+        z: pos[1],
+        rotation: Math.atan2(rot[2], rot[0]),
+        type,
+        id
+      };
+    }) : [],
   };
 }
 

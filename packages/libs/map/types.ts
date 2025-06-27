@@ -274,6 +274,13 @@ export type BaseItem = Readonly<{
   sectorY: number;
 }>;
 
+export type Railing = Readonly<{
+  rightRailing: string;
+  rightRailingOffset: number;
+  leftRailing: string;
+  leftRailingOffset: number;
+}>;
+
 export type Road = BaseItem &
   Readonly<{
     type: ItemType.Road;
@@ -282,6 +289,7 @@ export type Road = BaseItem &
     roadLookToken: string;
     startNodeUid: bigint;
     endNodeUid: bigint;
+    railings?: readonly Railing[];
     length: number;
     maybeDivided?: boolean;
   }>;
@@ -483,6 +491,14 @@ interface NavCurve {
   nextLines: number[];
   prevLines: number[];
 }
+interface Semaphore {
+  x: number;
+  y: number;
+  z: number;
+  rotation: number;
+  type: number;
+  id: number;
+}
 export interface PrefabDescription {
   // prefab's entry/exit points
   nodes: {
@@ -508,6 +524,7 @@ export interface PrefabDescription {
     action: string;
   }[];
   navCurves: NavCurve[];
+  semaphores: Semaphore[];
   navNodes: {
     type: 'physical' | 'ai';
     // if type is physical: the index of the normal node (see nodes array) this navNode ends at.
