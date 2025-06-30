@@ -490,6 +490,7 @@ interface NavCurve {
   };
   nextLines: number[];
   prevLines: number[];
+  semaphoreId?: number; // index into `semaphores` array
 }
 interface Semaphore {
   x: number;
