@@ -791,10 +791,14 @@ function toBaseItem<T extends SectorItemKey>(
 
 function toRoad(rawItem: SectorItem<ItemType.Road>): WithoutSectorXY<Road> {
   // Only export railings if at least one is present.
-  const hasAnyRailing = rawItem.railings.some(r => 
-    r.rightRailing !== "" || r.leftRailing !== "" || r.rightRailingOffset !== 0 || r.leftRailingOffset !== 0
+  const hasAnyRailing = rawItem.railings.some(
+    r =>
+      r.rightRailing !== '' ||
+      r.leftRailing !== '' ||
+      r.rightRailingOffset !== 0 ||
+      r.leftRailingOffset !== 0,
   );
-  
+
   return {
     ...toBaseItem(rawItem),
     dlcGuard: rawItem.dlcGuard,
@@ -803,12 +807,14 @@ function toRoad(rawItem: SectorItem<ItemType.Road>): WithoutSectorXY<Road> {
     roadLookToken: rawItem.roadLook,
     startNodeUid: rawItem.startNodeUid,
     endNodeUid: rawItem.endNodeUid,
-    railings: hasAnyRailing ? rawItem.railings.map(r => ({
-      rightRailing: r.rightRailing,
-      rightRailingOffset: r.rightRailingOffset,
-      leftRailing: r.leftRailing,
-      leftRailingOffset: r.leftRailingOffset,
-    })) : [],
+    railings: hasAnyRailing
+      ? rawItem.railings.map(r => ({
+          rightRailing: r.rightRailing,
+          rightRailingOffset: r.rightRailingOffset,
+          leftRailing: r.leftRailing,
+          leftRailingOffset: r.leftRailingOffset,
+        }))
+      : [],
     length: rawItem.length,
   };
 }
