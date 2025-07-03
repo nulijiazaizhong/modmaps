@@ -61,6 +61,8 @@ export const enum MetadataType {
   SAMPLE = 2,
   MIP_PROXY,
   INLINE_DIRECTORY = 4,
+  PMA_INFO = 5,
+  PMG_INFO = 6,
   PLAIN = 1 << 7,
   DIRECTORY = MetadataType.PLAIN | 1,
   MIP_0 = MetadataType.PLAIN | 2,
@@ -121,6 +123,22 @@ const SampleMeta = new r.Struct({
   })),
 }); // 4 bytes
 
+// MetadataEntryHeader::type === MetadataType.PMA_INFO
+const PmaInfoMeta = new r.Struct({
+  flag: r.uint32le,
+  animationLength: r.floatle,
+  skeletonHash: uint64le,
+  bSphereRad: r.floatle,
+  bSphereOrgX: r.floatle,
+  bSphereOrgY: r.floatle,
+  bSphereOrgZ: r.floatle,
+}); // 32 bytes
+
+// MetadataEntryHeader::type === MetadataType.PMG_INFO
+const PmgInfoMeta = new r.Struct({
+  skeletonHash: uint64le,
+}); // 8 bytes
+
 // MetadataEntryHeader::type & MetadataType.PLAIN
 const PlainMeta = new r.Struct({
   compressedSize: r.uint24le,
@@ -135,6 +153,8 @@ type MetadataEntry = { version: MetadataType } & (
   | BaseOf<typeof ImageMeta>
   | BaseOf<typeof SampleMeta>
   | BaseOf<typeof PlainMeta>
+  | BaseOf<typeof PmaInfoMeta>
+  | BaseOf<typeof PmgInfoMeta>
 );
 
 const MetadataEntryHeader = new r.Struct({
@@ -253,12 +273,18 @@ export class ScsArchiveV2 {
           case MetadataType.SAMPLE:
           case MetadataType.PLAIN:
           case MetadataType.DIRECTORY:
-          case MetadataType.MIP_TAIL: {
+          case MetadataType.MIP_TAIL:
+          case MetadataType.PMA_INFO:
+          case MetadataType.PMG_INFO: {
             let descriptor;
             if (type === MetadataType.IMG) {
               descriptor = ImageMeta;
             } else if (type === MetadataType.SAMPLE) {
               descriptor = SampleMeta;
+            } else if (type === MetadataType.PMA_INFO) {
+              descriptor = PmaInfoMeta;
+            } else if (type === MetadataType.PMG_INFO) {
+              descriptor = PmgInfoMeta;
             } else {
               descriptor = PlainMeta;
             }
@@ -340,7 +366,7 @@ function createEntryV2(
     return createTobjEntry(fd, header, metadataMap);
   }
 
-  assert(header.metadataCount === 1);
+  // assert(header.metadataCount === 1);
   const assocMetadata = assertExists(metadataMap.get(header.metadataIndex));
   if (header.flags.isDirectory) {
     assert(
