@@ -42,7 +42,7 @@ type WithoutSectorXY<T extends { sectorX: number; sectorY: number }> = Omit<
 // struct definitions derived from https://github.com/dariowouters/ts-map/blob/master/docs/structures/base/875/base-template.bt
 // https://github.com/sk-zk/map-docs/wiki/Map-format
 
-let versionFormat = 901;
+let versionFormat = 903;
 
 const quadInfo = new r.Struct({
   materials: new r.Array(
@@ -108,6 +108,7 @@ const SimpleItemStruct = {
     node0Offset: float3,
     node1Offset: float3,
     length: r.floatle,
+    previousLength: new r.Optional(r.floatle, () => versionFormat > 901),
     randomSeed: r.uint32le,
     railings: new r.Array(
       new r.Struct({
@@ -237,9 +238,19 @@ const SimpleItemStruct = {
     // debugStruct,
   },
   [ItemType.Company]: {
-    overlayName: token64,
-    cityName: token64,
-    prefabUid: uint64le,
+    // after 901 'overlayName' moved below 'prefabUid'
+    // don't know if there's a better way to keep it backwards compatible
+    ...(versionFormat < 902
+      ? {
+          overlayName: token64,
+          cityName: token64,
+          prefabUid: uint64le,
+        }
+      : {
+          cityName: token64,
+          prefabUid: uint64le,
+          overlayName: token64,
+        }),
     nodeUid: uint64le,
     nodes: new r.Array(
       new r.Struct({
@@ -684,7 +695,7 @@ export function parseSector(buffer: Buffer) {
   const version = buffer.readUint32LE();
   versionFormat = version;
 
-  if (version < 901) {
+  if (version < 903) {
     if (!versionWarnings.has(version)) {
       logger.warn('older .base file version', version);
       logger.warn('errors may come up, and parse results may be inaccurate.');
