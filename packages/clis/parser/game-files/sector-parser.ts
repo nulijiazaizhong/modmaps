@@ -240,17 +240,22 @@ const SimpleItemStruct = {
   [ItemType.Company]: {
     // after 901 'overlayName' moved below 'prefabUid'
     // don't know if there's a better way to keep it backwards compatible
-    ...(versionFormat < 902
-      ? {
-          overlayName: token64,
-          cityName: token64,
-          prefabUid: uint64le,
-        }
-      : {
-          cityName: token64,
-          prefabUid: uint64le,
-          overlayName: token64,
-        }),
+    post_901_data: new r.Optional(
+      new r.Struct({
+        cityName: token64,
+        prefabUid: uint64le,
+        overlayName: token64,
+      }),
+      () => versionFormat > 901,
+    ),
+    pre_902_data: new r.Optional(
+      new r.Struct({
+        overlayName: token64,
+        cityName: token64,
+        prefabUid: uint64le,
+      }),
+      () => versionFormat < 902,
+    ),
     nodeUid: uint64le,
     nodes: new r.Array(
       new r.Struct({
@@ -897,9 +902,18 @@ function toCompany(
 ): WithoutSectorXY<CompanyItem> {
   return {
     ...toBaseItem(rawItem),
-    token: rawItem.overlayName,
-    cityToken: rawItem.cityName,
-    prefabUid: rawItem.prefabUid,
+
+    // after 901 'overlayName' moved below 'prefabUid'
+    // don't know if there's a better way to keep it backwards compatible
+    token: rawItem.post_901_data
+      ? rawItem.post_901_data.overlayName
+      : rawItem.pre_902_data.overlayName,
+    cityToken: rawItem.post_901_data
+      ? rawItem.post_901_data.cityName
+      : rawItem.pre_902_data.cityName,
+    prefabUid: rawItem.post_901_data
+      ? rawItem.post_901_data.prefabUid
+      : rawItem.pre_902_data.prefabUid,
     nodeUid: rawItem.nodeUid,
   };
 }
