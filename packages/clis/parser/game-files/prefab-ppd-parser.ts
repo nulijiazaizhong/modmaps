@@ -427,6 +427,7 @@ export function parsePrefabPpd(buffer: Buffer): PrefabDescription {
         startRot,
         endPos,
         endRot,
+        semaphoreId
       } = rc;
       const start = getXYZR(startPos, startRot);
       const end = getXYZR(endPos, endRot);
@@ -436,6 +437,7 @@ export function parsePrefabPpd(buffer: Buffer): PrefabDescription {
         end,
         nextLines: rc.nextLines.slice(0, countNext),
         prevLines: rc.prevLines.slice(0, countPrev),
+        semaphoreId
       };
     }),
     navNodes: rawPrefab.navNodes
