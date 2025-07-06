@@ -220,10 +220,7 @@ export type Achievement = Readonly<
       type: 'ferryData';
       endpointA: string;
       endpointB: string;
-    }
-  | {
-      type: 'ferryDataByType';
-      ferryType: 'ferry' | 'train';
+      ferryType: 'all' | 'ferry' | 'train';
     }
   | {
       type: 'eachDeliveryPoint';

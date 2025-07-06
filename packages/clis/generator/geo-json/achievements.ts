@@ -17,7 +17,7 @@ import type {
 } from '@truckermudgeon/map/types';
 import { normalizeDlcGuards } from '../dlc-guards';
 import { logger } from '../logger';
-import type { MapDataKeys, MappedDataForKeys } from '../mapped-data';
+import type { MappedData } from '../mapped-data';
 import { createNormalizeFeature } from './normalize';
 
 interface Point {
@@ -25,26 +25,7 @@ interface Point {
   dlcGuard: number;
 }
 
-export const achievementsMapDataKeys = [
-  'achievements',
-  'cities',
-  'companies',
-  'countries',
-  'cutscenes',
-  'ferries',
-  'mapAreas',
-  'nodes',
-  'pois',
-  'prefabs',
-  'roads',
-  'routes',
-  'trajectories',
-  'triggers',
-] satisfies MapDataKeys;
-
-type AchievementsMapData = MappedDataForKeys<typeof achievementsMapDataKeys>;
-
-export function convertToAchievementsGeoJson(tsMapData: AchievementsMapData) {
+export function convertToAchievementsGeoJson(tsMapData: MappedData) {
   const {
     map,
     nodes,
@@ -99,7 +80,7 @@ export function convertToAchievementsGeoJson(tsMapData: AchievementsMapData) {
     if (!company) {
       return;
     }
-    const node = assertExists(nodes.get(company.nodeUid));
+    const node = assertExists(nodes.get(company.nodeUid.toString(16)));
     return {
       coordinates: node,
       dlcGuard: getDlcGuard(node),
@@ -184,7 +165,7 @@ export function convertToAchievementsGeoJson(tsMapData: AchievementsMapData) {
       // TODO use other points in Trigger to draw a circle or polygon
       const firstNodeUid =
         item.type === ItemType.Trigger ? item.nodeUids[0] : item.nodeUid;
-      const node = assertExists(nodes.get(firstNodeUid));
+      const node = assertExists(nodes.get(firstNodeUid.toString(16)));
       return {
         coordinates: node,
         dlcGuard: getDlcGuard(item),
@@ -194,31 +175,35 @@ export function convertToAchievementsGeoJson(tsMapData: AchievementsMapData) {
   const ferryAchievementToPoints = (
     achievement: Achievement & { type: 'ferryData' },
   ): Point[] => {
-    const aFerry = ferries.get(achievement.endpointA);
-    const bFerry = ferries.get(achievement.endpointB);
-    if (aFerry == null || bFerry == null) {
-      return [];
+    if (achievement.endpointA && achievement.endpointB) {
+      const aFerry = ferries.get(achievement.endpointA);
+      const bFerry = ferries.get(achievement.endpointB);
+      if (aFerry == null || bFerry == null) {
+        return [];
+      }
+
+      const aDlcGuard = getDlcGuard(aFerry);
+      const bDlcGuard = getDlcGuard(bFerry);
+      const dlcGuard = calcDlcGuard(aDlcGuard, bDlcGuard);
+      return [
+        { coordinates: aFerry, dlcGuard },
+        { coordinates: bFerry, dlcGuard },
+      ];
     }
 
-    const aDlcGuard = getDlcGuard(aFerry);
-    const bDlcGuard = getDlcGuard(bFerry);
-    const dlcGuard = calcDlcGuard(aDlcGuard, bDlcGuard);
-    return [
-      { coordinates: aFerry, dlcGuard },
-      { coordinates: bFerry, dlcGuard },
-    ];
+    if (achievement.ferryType) {
+      const ferriesByType = [...ferries.values()].filter(
+        f => f.train === (achievement.ferryType === 'train'),
+      );
+      return ferriesByType.map(f => ({
+        coordinates: f,
+        dlcGuard: getDlcGuard(f),
+      }));
+    }
+
+    return [];
   };
-  const ferryByTypeAchievementToPoints = (
-    achievement: Achievement & { type: 'ferryDataByType' },
-  ): Point[] => {
-    const ferriesByType = [...ferries.values()].filter(
-      f => f.train === (achievement.ferryType === 'train'),
-    );
-    return ferriesByType.map(f => ({
-      coordinates: f,
-      dlcGuard: getDlcGuard(f),
-    }));
-  };
+
   const deliveryPointAchievementToPoints = (
     achievement: Achievement & { type: 'eachDeliveryPoint' },
   ): Point[] => {
@@ -329,7 +314,7 @@ export function convertToAchievementsGeoJson(tsMapData: AchievementsMapData) {
       switch (a.type) {
         case 'visitCityData':
           if (a.cities) {
-            points.push(              
+            points.push(
               ...a.cities.filter(t => cities.has(t)).map(cityTokenToPoint),
             );
           }
@@ -361,9 +346,6 @@ export function convertToAchievementsGeoJson(tsMapData: AchievementsMapData) {
         }
         case 'ferryData':
           points.push(...ferryAchievementToPoints(a));
-          break;
-        case 'ferryDataByType':
-          points.push(...ferryByTypeAchievementToPoints(a));
           break;
         case 'eachDeliveryPoint': {
           const deliverPoints = deliveryPointAchievementToPoints(a);

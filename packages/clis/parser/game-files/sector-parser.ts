@@ -42,7 +42,7 @@ type WithoutSectorXY<T extends { sectorX: number; sectorY: number }> = Omit<
 // struct definitions derived from https://github.com/dariowouters/ts-map/blob/master/docs/structures/base/875/base-template.bt
 // https://github.com/sk-zk/map-docs/wiki/Map-format
 
-let versionFormat = 901;
+let versionFormat = 903;
 
 const quadInfo = new r.Struct({
   materials: new r.Array(
@@ -108,6 +108,7 @@ const SimpleItemStruct = {
     node0Offset: float3,
     node1Offset: float3,
     length: r.floatle,
+    previousLength: new r.Optional(r.floatle, () => versionFormat > 901),
     randomSeed: r.uint32le,
     railings: new r.Array(
       new r.Struct({
@@ -237,9 +238,24 @@ const SimpleItemStruct = {
     // debugStruct,
   },
   [ItemType.Company]: {
-    overlayName: token64,
-    cityName: token64,
-    prefabUid: uint64le,
+    // after 901 'overlayName' moved below 'prefabUid'
+    // don't know if there's a better way to keep it backwards compatible
+    post_901_data: new r.Optional(
+      new r.Struct({
+        cityName: token64,
+        prefabUid: uint64le,
+        overlayName: token64,
+      }),
+      () => versionFormat > 901,
+    ),
+    pre_902_data: new r.Optional(
+      new r.Struct({
+        overlayName: token64,
+        cityName: token64,
+        prefabUid: uint64le,
+      }),
+      () => versionFormat < 902,
+    ),
     nodeUid: uint64le,
     nodes: new r.Array(
       new r.Struct({
@@ -684,7 +700,7 @@ export function parseSector(buffer: Buffer) {
   const version = buffer.readUint32LE();
   versionFormat = version;
 
-  if (version < 901) {
+  if (version < 903) {
     if (!versionWarnings.has(version)) {
       logger.warn('older .base file version', version);
       logger.warn('errors may come up, and parse results may be inaccurate.');
@@ -791,10 +807,14 @@ function toBaseItem<T extends SectorItemKey>(
 
 function toRoad(rawItem: SectorItem<ItemType.Road>): WithoutSectorXY<Road> {
   // Only export railings if at least one is present.
-  const hasAnyRailing = rawItem.railings.some(r => 
-    r.rightRailing !== "" || r.leftRailing !== "" || r.rightRailingOffset !== 0 || r.leftRailingOffset !== 0
+  const hasAnyRailing = rawItem.railings.some(
+    r =>
+      r.rightRailing !== '' ||
+      r.leftRailing !== '' ||
+      r.rightRailingOffset !== 0 ||
+      r.leftRailingOffset !== 0,
   );
-  
+
   return {
     ...toBaseItem(rawItem),
     dlcGuard: rawItem.dlcGuard,
@@ -803,12 +823,14 @@ function toRoad(rawItem: SectorItem<ItemType.Road>): WithoutSectorXY<Road> {
     roadLookToken: rawItem.roadLook,
     startNodeUid: rawItem.startNodeUid,
     endNodeUid: rawItem.endNodeUid,
-    railings: hasAnyRailing ? rawItem.railings.map(r => ({
-      rightRailing: r.rightRailing,
-      rightRailingOffset: r.rightRailingOffset,
-      leftRailing: r.leftRailing,
-      leftRailingOffset: r.leftRailingOffset,
-    })) : [],
+    railings: hasAnyRailing
+      ? rawItem.railings.map(r => ({
+          rightRailing: r.rightRailing,
+          rightRailingOffset: r.rightRailingOffset,
+          leftRailing: r.leftRailing,
+          leftRailingOffset: r.leftRailingOffset,
+        }))
+      : [],
     length: rawItem.length,
   };
 }
@@ -880,9 +902,18 @@ function toCompany(
 ): WithoutSectorXY<CompanyItem> {
   return {
     ...toBaseItem(rawItem),
-    token: rawItem.overlayName,
-    cityToken: rawItem.cityName,
-    prefabUid: rawItem.prefabUid,
+
+    // after 901 'overlayName' moved below 'prefabUid'
+    // don't know if there's a better way to keep it backwards compatible
+    token: rawItem.post_901_data
+      ? rawItem.post_901_data.overlayName
+      : rawItem.pre_902_data.overlayName,
+    cityToken: rawItem.post_901_data
+      ? rawItem.post_901_data.cityName
+      : rawItem.pre_902_data.cityName,
+    prefabUid: rawItem.post_901_data
+      ? rawItem.post_901_data.prefabUid
+      : rawItem.pre_902_data.prefabUid,
     nodeUid: rawItem.nodeUid,
   };
 }
