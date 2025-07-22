@@ -2,6 +2,7 @@
 import fs from 'fs';
 import * as r from 'restructure';
 import zlib from 'zlib';
+import { logger } from '../logger';
 import { uint64le } from './restructure-helpers';
 import type { DirectoryEntry, Entries, FileEntry } from './scs-archive';
 import { createStore } from './scs-archive';
@@ -146,7 +147,15 @@ abstract class ScsArchiveEntryV1 {
     if (!this.metadata.isDataCompressed) {
       return rawData;
     }
-    return zlib.inflateSync(rawData);
+    try {
+      return zlib.inflateSync(rawData);
+    } catch (error) {
+      logger.error(
+        `Error inflating data for entry with hash ${this.hash}:`,
+        error,
+      );
+      return rawData;
+    }
   }
 }
 
