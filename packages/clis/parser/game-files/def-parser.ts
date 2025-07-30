@@ -1,5 +1,4 @@
 import { assert, assertExists } from '@truckermudgeon/base/assert';
-import { Preconditions } from '@truckermudgeon/base/precon';
 import { isLaneSpeedClass } from '@truckermudgeon/map/constants';
 import type {
   Achievement,
@@ -15,15 +14,15 @@ import type {
   RoadLook,
   Route,
   SpeedLimits,
-  WithPath,
 } from '@truckermudgeon/map/types';
 import type { JSONSchemaType } from 'ajv';
+import * as cliProgress from 'cli-progress';
 import { logger } from '../logger';
+import type { CombinedEntries } from './combined-entries';
 import { convertSiiToJson } from './convert-sii-to-json';
 import { parseModelPmg } from './model-pmg-parser';
 import { parsePrefabPpd } from './prefab-ppd-parser';
 import type { Entries } from './scs-archive';
-import { parseSii } from './sii-parser';
 import type {
   AchievementsSii,
   CitySii,
@@ -54,15 +53,16 @@ import {
   SpeedLimitSiiSchema,
   ViewpointsSiiSchema,
 } from './sii-schemas';
-import { includeDirectiveCollector } from './sii-visitors';
 
-export function parseDefFiles(entries: Entries, application: 'ats' | 'eut2') {
+export function parseDefFiles(
+  entries: CombinedEntries,
+  application: 'ats' | 'eut2' | 'mod' = 'mod',
+) {
   logger.log(
     'parsing',
     application,
     'def, prefab .ppd, and model .pmg files...',
   );
-  const def = Preconditions.checkExists(entries.directories.get('def'));
 
   const cities = new Map<
     string,
@@ -79,6 +79,14 @@ export function parseDefFiles(entries: Entries, application: 'ats' | 'eut2') {
       >[];
     }
   >();
+  const prefabs = new Map<string, PrefabDescription & { path: string }>();
+  const roadLooks = new Map<string, RoadLook>();
+  const models = new Map<string, ModelDescription>();
+  const vegetation = new Set<string>();
+  const viewpoints = new Map<bigint, string>();
+  const achievements = new Map<string, Achievement>();
+  const routes: Map<string, Route> = new Map<string, Route>();
+  const mileageTargets = new Map<string, MileageTarget>();
 
   const processAndAdd = <T extends object, U extends { token: string }>(
     path: string,
@@ -87,182 +95,318 @@ export function parseDefFiles(entries: Entries, application: 'ats' | 'eut2') {
     m: Map<string, U>,
   ) => {
     const t = convertSiiToJson(path, entries, schema);
-    const u = p(t, entries);
-    if (u) {
-      m.set(u.token, u);
+    if (t) {
+      const u = p(t, entries);
+      if (u) {
+        m.set(u.token, u);
+      }
     }
   };
 
-  for (const f of def.files) {
-    if (!/^(city|country|company|ferry)\./.test(f) || !f.endsWith('.sii')) {
-      continue;
+  const def = entries.directories.get('def');
+  if (!def)
+    return {
+      achievements,
+      routes,
+      cities,
+      prefabs,
+      models,
+      viewpoints,
+      mileageTargets,
+      countries,
+      companies,
+      ferries,
+      roadLooks,
+      vegetation,
+    };
+
+  const bar = new cliProgress.SingleBar(
+    {
+      format: '[{bar}] {percentage}% | {filename} | {value} of {total}',
+      stopOnComplete: true,
+      clearOnComplete: true,
+    },
+    cliProgress.Presets.rect,
+  );
+  bar.start(10, 0, { filename: 'city' });
+
+  const city = entries.directories.get('def/city');
+  if (city) {
+    const cityFiles = city.files.filter(
+      f =>
+        (f.endsWith('.sui') || f.endsWith('.sii')) &&
+        !/^.*(_car|_bus|_trailer|_truck|_police|_templates)\.(sui|sii)$/.test(
+          f,
+        ),
+    );
+    for (const cityFile of cityFiles) {
+      processAndAdd(
+        `def/city/${cityFile}`,
+        CitySiiSchema,
+        processCityJson,
+        cities,
+      );
     }
-    if (/\b(?:x_land|x_choco|xmas2023)\b/.test(f)) {
-      continue; // skip Winterland community event
+  }
+
+  bar.increment({ filename: 'company' });
+  const company = entries.directories.get('def/company');
+  if (company) {
+    const companyFiles = company.files.filter(
+      f => f.endsWith('.sui') || f.endsWith('.sii'),
+    );
+    for (const companyFile of companyFiles) {
+      processAndAdd(
+        `def/company/${companyFile}`,
+        CompanySiiSchema,
+        processCompanyJson,
+        companies,
+      );
     }
-    const includePaths = parseIncludeOnlySii(`def/${f}`, entries);
-    for (const path of includePaths) {
-      if (f.startsWith('city.')) {
-        processAndAdd(path, CitySiiSchema, processCityJson, cities);
-      } else if (f.startsWith('country.')) {
-        const partialCountry = processCountryJson(
-          convertSiiToJson(path, entries, CountrySiiSchema),
+  }
+
+  bar.increment({ filename: 'ferry' });
+  const ferry = entries.directories.get('def/ferry');
+  if (ferry) {
+    const ferryFiles = ferry.files.filter(
+      f => f.endsWith('.sui') || f.endsWith('.sii'),
+    );
+    for (const ferryFile of ferryFiles) {
+      processAndAdd(
+        `def/ferry/${ferryFile}`,
+        FerrySiiSchema,
+        processFerryJson,
+        ferries,
+      );
+    }
+  }
+
+  bar.increment({ filename: 'country' });
+  const country = entries.directories.get('def/country');
+  if (country) {
+    const countryFiles = country.files.filter(
+      f => f.endsWith('.sui') || f.endsWith('.sii'),
+    );
+    for (const countryFile of countryFiles) {
+      const partialCountry = processCountryJson(
+        convertSiiToJson(
+          `def/country/${countryFile}`,
+          entries,
+          CountrySiiSchema,
+        ),
+      );
+
+      if (partialCountry) {
+        const speedLimitsPath = `def/country/${countryFile}`.replace(
+          /(.sii)|(.sui)/,
+          '/speed_limits.sii',
         );
-        if (partialCountry) {
-          const truckSpeedLimits = processSpeedLimitJson(
-            convertSiiToJson(
-              path.replace('.sui', '/speed_limits.sii'),
-              entries,
-              SpeedLimitSiiSchema,
-            ),
-          );
-          countries.set(partialCountry.token, {
-            ...partialCountry,
-            truckSpeedLimits,
-          });
-        }
-      } else if (f.startsWith('company.')) {
-        processAndAdd(path, CompanySiiSchema, processCompanyJson, companies);
-      } else if (f.startsWith('ferry.')) {
-        processAndAdd(path, FerrySiiSchema, processFerryJson, ferries);
-      } else {
-        throw new Error();
+        const speedLimits = entries.files.get(speedLimitsPath);
+        if (!speedLimits) continue;
+
+        const truckSpeedLimits = processSpeedLimitJson(
+          convertSiiToJson(speedLimitsPath, entries, SpeedLimitSiiSchema),
+        );
+        countries.set(partialCountry.token, {
+          ...partialCountry,
+          truckSpeedLimits,
+        });
       }
     }
   }
+
   logger.info('parsed', cities.size, 'cities');
   logger.info('parsed', countries.size, 'states/countries');
   logger.info('parsed', companies.size, 'companies');
   logger.info('parsed', ferries.size, 'ferry/train terminals');
 
-  const defCompany = Preconditions.checkExists(
-    entries.directories.get('def/company'),
-  );
-  for (const token of defCompany.subdirectories) {
-    if (companies.has(token)) {
-      continue;
-    }
-    const companyDefaults = {
-      token,
-      // TODO truck dealers _do_ have city tokens, found within the `editor` subdirectories.
-      cityTokens: [],
-      cargoInTokens: [],
-      cargoOutTokens: [],
-    };
-    if (token.startsWith('pt_trk_')) {
-      companies.set(token, {
-        ...companyDefaults,
-        name: 'Peterbilt',
-      });
-    } else if (token.startsWith('kw_trk_')) {
-      companies.set(token, {
-        ...companyDefaults,
-        name: 'Kenworth',
-      });
-    } else if (token.startsWith('ws_trk_')) {
-      companies.set(token, {
-        ...companyDefaults,
-        name: 'Western Star',
-      });
-    } else {
-      logger.warn(token, 'has no company info');
-    }
-  }
-
-  const defWorld = Preconditions.checkExists(
-    entries.directories.get('def/world'),
-  );
-  const prefabs = new Map<string, WithPath<PrefabDescription>>();
-  const roadLooks = new Map<string, RoadLook>();
-  const models = new Map<string, ModelDescription>();
-  const vegetation = new Set<string>();
-  for (const f of defWorld.files) {
-    if (!/^(prefab|road_look|model)\./.test(f) || !f.endsWith('.sii')) {
-      continue;
-    }
-
-    if (f.startsWith('prefab.')) {
-      const json = convertSiiToJson(`def/world/${f}`, entries, PrefabSiiSchema);
-      processPrefabJson(json, entries).forEach((v, k) => prefabs.set(k, v));
-    } else if (f.startsWith('model')) {
-      const json = convertSiiToJson(`def/world/${f}`, entries, ModelSiiSchema);
-      const { buildings, vegetation: _vegetation } = processModelJson(
-        json,
-        entries,
-      );
-      buildings.forEach((v, k) => models.set(k, v));
-      _vegetation.forEach(v => vegetation.add(v));
-    } else if (f.startsWith('road_look.')) {
-      const json = convertSiiToJson(
-        `def/world/${f}`,
-        entries,
-        RoadLookSiiSchema,
-      );
-      processRoadLookJson(json).forEach((v, k) => roadLooks.set(k, v));
-    } else {
-      throw new Error();
-    }
-  }
-  logger.info('parsed', prefabs.size, 'prefab defs');
-  logger.info('parsed', roadLooks.size, 'road looks');
-  logger.info('parsed', models.size, 'building models');
-  logger.info('parsed', vegetation.size, 'vegetation models');
-
-  const mileageTargets: Map<string, MileageTarget> = processMileageTargetJson(
-    convertSiiToJson(
-      'def/sign/mileage_targets.sii',
-      entries,
-      MileageTargetsSiiSchema,
-    ),
-  );
-  logger.info('parsed', mileageTargets.size, 'mileage targets');
-
-  const defPhotoAlbum = Preconditions.checkExists(
-    entries.directories.get('def/photo_album'),
-  );
-  const viewpoints = new Map<bigint, string>(); // item.uid to l10n token
-  let itemCount = 0;
-  for (const f of defPhotoAlbum.files) {
-    if (!/^(viewpoints|landmarks)\.sui$/.test(f)) {
-      continue;
-    }
-    const json = convertSiiToJson(
-      `def/photo_album/${f}`,
-      entries,
-      ViewpointsSiiSchema,
-    );
-    const items = json.photoAlbumItem;
-    for (const val of Object.values(items)) {
-      itemCount++;
-      for (const uid of val.objectsUid) {
-        const token = val.name.replace(/(^@@)|(@@$)/g, '');
-        viewpoints.set(uid, token);
+  bar.increment({ filename: 'dealers' });
+  const defCompany = entries.directories.get('def/company');
+  if (defCompany) {
+    for (const token of defCompany.subdirectories) {
+      if (companies.has(token)) {
+        continue;
+      }
+      const companyDefaults = {
+        token,
+        // TODO truck dealers _do_ have city tokens, found within the `editor` subdirectories.
+        cityTokens: [],
+        cargoInTokens: [],
+        cargoOutTokens: [],
+      };
+      if (token.startsWith('pt_trk_')) {
+        companies.set(token, {
+          ...companyDefaults,
+          name: 'Peterbilt',
+        });
+      } else if (token.startsWith('kw_trk_')) {
+        companies.set(token, {
+          ...companyDefaults,
+          name: 'Kenworth',
+        });
+      } else if (token.startsWith('ws_trk_')) {
+        companies.set(token, {
+          ...companyDefaults,
+          name: 'Western Star',
+        });
+      } else {
+        companies.set(token, {
+          ...companyDefaults,
+          name: token,
+        });
       }
     }
   }
-  logger.info('parsed', itemCount, 'viewpoints and photo trophies');
 
-  const achievements = new Map<string, Achievement>();
-  for (const f of def.files) {
-    if (/^achievements\.(\w+\.)?sii$/.test(f)) {
-      const json = convertSiiToJson(`def/${f}`, entries, AchievementsSiiSchema);
-      processAchievementsJson(json).forEach((v, k) => achievements.set(k, v));
+  bar.increment({ filename: 'world' });
+  const defWorld = entries.directories.get('def/world');
+  if (defWorld) {
+    for (const f of defWorld.files) {
+      if (!/^(prefab|road_look|model)\./.test(f) || !f.endsWith('.sii')) {
+        continue;
+      }
+
+      if (f.startsWith('prefab')) {
+        const json = convertSiiToJson(
+          `def/world/${f}`,
+          entries,
+          PrefabSiiSchema,
+        );
+        processPrefabJson(json, entries).forEach((v, k) => prefabs.set(k, v));
+      } else if (f.startsWith('model')) {
+        const json = convertSiiToJson(
+          `def/world/${f}`,
+          entries,
+          ModelSiiSchema,
+        );
+        const { buildings, vegetation: _vegetation } = processModelJson(
+          json,
+          entries,
+        );
+        buildings.forEach((v, k) => models.set(k, v));
+        _vegetation.forEach(v => vegetation.add(v));
+      } else if (f.startsWith('road_look')) {
+        const json = convertSiiToJson(
+          `def/world/${f}`,
+          entries,
+          RoadLookSiiSchema,
+        );
+        processRoadLookJson(json).forEach((v, k) => roadLooks.set(k, v));
+      } else {
+        throw new Error();
+      }
     }
+    logger.info('parsed', prefabs.size, 'prefab defs');
+    logger.info('parsed', roadLooks.size, 'road looks');
+    logger.info('parsed', models.size, 'building models');
+    logger.info('parsed', vegetation.size, 'vegetation models');
   }
-  logger.info('parsed', achievements.size, 'achievements');
 
-  let routes: Map<string, Route>;
-  if (entries.files.get('def/route.sii')) {
-    routes = processRouteJson(
-      convertSiiToJson('def/route.sii', entries, RouteSiiSchema),
-    );
-  } else {
-    // if `def/route.sii` doesn't exist, then the installation doesn't have the
-    // Special Transport DLC.
-    routes = new Map();
+  bar.increment({ filename: 'mileage targets' });
+  const mileageFiles = entries.getAllFiles('def/sign/mileage_targets.sii');
+  if (mileageFiles.length > 0) {
+    for (const mileageFile of mileageFiles) {
+      const mileageData = processMileageTargetJson(
+        convertSiiToJson(
+          'def/sign/mileage_targets.sii',
+          entries,
+          MileageTargetsSiiSchema,
+          mileageFile,
+        ),
+      );
+      mileageData.forEach((v, k) => mileageTargets.set(k, v));
+    }
+    logger.info('parsed', mileageTargets.size, 'mileage targets');
   }
-  logger.info('parsed', routes.size, 'special transport routes');
 
+  bar.increment({ filename: 'photo album' });
+  const viewpointsFiles = entries.getAllFiles('def/photo_album/viewpoints.sui');
+  const landmarksFiles = entries.getAllFiles('def/photo_album/landmarks.sui');
+  if (viewpointsFiles.length > 0 || landmarksFiles.length > 0) {
+    let itemCount = 0;
+    for (const viewpointFile of viewpointsFiles) {
+      const json = convertSiiToJson(
+        'def/photo_album/viewpoints.sui',
+        entries,
+        ViewpointsSiiSchema,
+        viewpointFile,
+      );
+      if (!json) continue;
+      const items = json.photoAlbumItem;
+      for (const val of Object.values(items)) {
+        itemCount++;
+        for (const uid of val.objectsUid) {
+          const token = val.name.replace(/(^@@)|(@@$)/g, '');
+          viewpoints.set(uid, token);
+        }
+      }
+    }
+
+    for (const landmarksFile of landmarksFiles) {
+      const json = convertSiiToJson(
+        'def/photo_album/landmarks.sui',
+        entries,
+        ViewpointsSiiSchema,
+        landmarksFile,
+      );
+      if (!json) continue;
+      const items = json.photoAlbumItem;
+      for (const val of Object.values(items)) {
+        itemCount++;
+        for (const uid of val.objectsUid) {
+          const token = val.name.replace(/(^@@)|(@@$)/g, ''); // item.uid to l10n token
+          viewpoints.set(uid, token);
+        }
+      }
+    }
+
+    logger.info('parsed', itemCount, 'viewpoints and photo trophies');
+  }
+
+  bar.increment({ filename: 'achievements' });
+  if (application !== 'mod') {
+    const achievementFilenames = entries.directories
+      .get('def')
+      ?.files.filter(f => f.startsWith('achievements'));
+
+    if (achievementFilenames) {
+      if (achievementFilenames.length === 0) {
+        // backwards compatibility
+        // try the `def/achievements.sii` path specifically if it can't find any achievement files in the `def` dir
+        achievementFilenames.push('achievements.sii');
+      }
+      for (const achievementFilename of achievementFilenames) {
+        const achievementJson = processAchievementsJson(
+          convertSiiToJson(
+            `def/${achievementFilename}`,
+            entries,
+            AchievementsSiiSchema,
+          ),
+        );
+        achievementJson.forEach((v, k) => achievements.set(k, v));
+      }
+    }
+    logger.info('parsed', achievements.size, 'achievements');
+  }
+
+  bar.increment({ filename: 'routes' });
+  const defRoutes = entries.directories
+    .get('def')
+    ?.files.filter(f => f.startsWith('route'));
+  if (defRoutes && defRoutes.length > 0) {
+    for (const defRoute of defRoutes) {
+      const routeFiles = entries.getAllFiles(`def/${defRoute}`);
+      for (const routeFile of routeFiles) {
+        const route = processRouteJson(
+          convertSiiToJson(defRoute, entries, RouteSiiSchema, routeFile),
+        );
+        route.forEach((v, k) => routes.set(k, v));
+      }
+    }
+    logger.info('parsed', routes.size, 'special transport routes');
+  }
+
+  bar.increment();
   return {
     achievements,
     routes,
@@ -279,29 +423,29 @@ export function parseDefFiles(entries: Entries, application: 'ats' | 'eut2') {
   };
 }
 
-function parseIncludeOnlySii(siiPath: string, entries: Entries): string[] {
-  logger.debug('parsing', siiPath, 'for @include directives');
-  const f = Preconditions.checkExists(entries.files.get(siiPath));
-  const res = parseSii(f.read().toString());
-  if (!res.ok) {
-    logger.error('error parsing', siiPath);
-    throw new Error();
-  }
-
-  return includeDirectiveCollector.collect(res.cst, 'def');
-}
+// function parseIncludeOnlySii(siiPath: string, entries: Entries): string[] {
+//   logger.debug('parsing', siiPath, 'for @include directives');
+//   const f = Preconditions.checkExists(entries.files.get(siiPath));
+//   const res = parseSii(decryptedSii(f.read()).toString());
+//   if (!res.ok) {
+//     logger.error('error parsing', siiPath);
+//     throw new Error();
+//   }
+//
+//   return includeDirectiveCollector.collect(res.cst, 'def');
+// }
 
 function processCityJson(obj: CitySii) {
   if (!obj.cityData) {
     return;
   }
   const entries = Object.entries(obj.cityData);
-  if (entries.length !== 1) {
-    throw new Error();
-  }
+  // if (entries.length !== 1) {
+  //   throw new Error();
+  // }
   const [token, rawCity] = entries[0];
   return {
-    token: token.split('.')[1],
+    token: token.replace('city.', ''),
     name: rawCity.cityName,
     nameLocalized: rawCity.cityNameLocalized,
     countryToken: rawCity.country,
@@ -336,20 +480,19 @@ function toLaneSpeedClass(str: string): LaneSpeedClass {
 }
 
 function processSpeedLimitJson(obj: SpeedLimitsSii) {
+  if (!obj.countrySpeedLimit) return {};
   const { laneSpeedClass, limit, maxLimit, urbanLimit } =
     obj.countrySpeedLimit['.speed_limit.truck'];
 
   // HACK: extra validation that isn't expressed in schema
   assert(
-    [limit, maxLimit, urbanLimit].every(
-      array => array.length === laneSpeedClass.length,
-    ),
+    [limit, urbanLimit].every(array => array.length === laneSpeedClass.length),
   );
 
   return laneSpeedClass.reduce((obj, className, index) => {
     obj[toLaneSpeedClass(className)] = {
       limit: limit[index],
-      maxLimit: maxLimit[index],
+      maxLimit: maxLimit ? maxLimit[index] : limit[index],
       urbanLimit: urbanLimit[index],
     };
     return obj;
@@ -368,12 +511,15 @@ function processCompanyJson(obj: CompanySii, entries: Entries): Company {
   );
   if (editorFolder) {
     for (const f of editorFolder.files) {
+      if (f.endsWith('.zip')) continue;
       const city = convertSiiToJson(
         `def/company/${companyToken}/editor/${f}`,
         entries,
         CityCompanySiiSchema,
       );
+      if (!city.companyDef) continue;
       for (const [, entry] of Object.entries(city.companyDef)) {
+        if (!entry.city) continue;
         cityTokens.push(entry.city);
       }
     }
@@ -390,8 +536,14 @@ function processCompanyJson(obj: CompanySii, entries: Entries): Company {
           entries,
           CargoSiiSchema,
         );
-        for (const [, entry] of Object.entries(cargo.cargoDef)) {
-          arr.push(entry.cargo);
+        if (cargo.cargoDef) {
+          for (const [, entry] of Object.entries(cargo.cargoDef)) {
+            arr.push(entry.cargo);
+          }
+        } else if (cargo.cargoData) {
+          for (const [, entry] of Object.entries(cargo.cargoData)) {
+            arr.push(entry.cargo);
+          }
         }
       }
     }
@@ -410,9 +562,9 @@ function processFerryJson(obj: FerrySii, entries: Entries) {
   const objEntries = Object.entries(obj.ferryData);
   const [tokenPath, rawFerry] = objEntries[0];
   const token = tokenPath.split('.')[1];
-  const defFerryConnection = Preconditions.checkExists(
-    entries.directories.get('def/ferry/connection'),
-  );
+  const defFerryConnection = entries.directories.get('def/ferry/connection');
+  if (!defFerryConnection) return;
+
   const connections: Omit<
     FerryConnection,
     'nodeUid' | 'x' | 'y' | 'name' | 'nameLocalized'
@@ -429,6 +581,8 @@ function processFerryJson(obj: FerrySii, entries: Entries) {
       FerryConnectionSiiSchema,
     );
     const ferryConnection = json.ferryConnection;
+    if (!ferryConnection) continue;
+
     const key = Object.keys(ferryConnection)[0];
     // key is expected to be in form: "conn.source_token.dest_token"
     const [, start, end] = key.split('.');
@@ -475,7 +629,7 @@ function processFerryJson(obj: FerrySii, entries: Entries) {
 function processPrefabJson(
   obj: PrefabSii,
   entries: Entries,
-): Map<string, WithPath<PrefabDescription>> {
+): Map<string, PrefabDescription & { path: string }> {
   const prefabModel = obj.prefabModel;
   if (!prefabModel) {
     return new Map();
@@ -483,7 +637,10 @@ function processPrefabJson(
 
   const prefabTuples = Object.entries(prefabModel).map(
     ([key, o]) =>
-      [key.split('.')[1], o.prefabDesc.substring(1)] as [string, string],
+      [key.replace('prefab.', ''), o.prefabDesc.substring(1)] as [
+        string,
+        string,
+      ],
   );
   const prefabs = new Map<string, PrefabDescription & { path: string }>();
   for (const [token, path] of prefabTuples) {
@@ -492,31 +649,35 @@ function processPrefabJson(
       logger.warn(`could not find prefab file for ${token}`);
       continue;
     }
-    const ppd = parsePrefabPpd(ppdFile.read());
-    if (ppd.mapPoints.some(p => p.type === 'polygon')) {
+    try {
+      const ppd = parsePrefabPpd(ppdFile.read());
+      // if (ppd.mapPoints.some(p => p.type === 'polygon')) {
       // TODO figure out a way to get building footprint information for
       //  polygons in prefabs that look like buildings.
 
       // Looks like there are spawn/no-spawn variants of prefabs that
       // reference the same pmg. Strip out the "_spawn" suffix when searching
       // for the associated pmg.
-      const pmgPath = path.replace(/(_spawn)?\.ppd$/, '.pmg');
-      const pmgFile = entries.files.get(pmgPath);
-      if (!pmgFile) {
-        logger.warn(`could not find pmg file ${pmgPath} for ${token}`);
-      } else {
-        //const pmg = parseModelPmg(pmgFile.read());
-        //if (pmg) {
-        //  //console.log(path, pmg?.height);
-        //}
-      }
+      // const pmgPath = path.replace(/(_spawn)?\.ppd$/, '.pmg');
+      // const pmgFile = entries.files.get(pmgPath);
+      // if (!pmgFile) {
+      //   logger.warn(`could not find pmg file ${pmgPath} for ${token}`);
+      // } else {
+      //const pmg = parseModelPmg(pmgFile.read());
+      //if (pmg) {
+      //  //console.log(path, pmg?.height);
+      //}
+      //   }
+      // }
+      prefabs.set(token, {
+        path,
+        ...ppd,
+      });
+      //      console.log(path);
+      //      toRoadSegmentsAndPolygons(prefabs.get(token)!);
+    } catch {
+      logger.warn(`could not parse ppd file for ${path}`);
     }
-    prefabs.set(token, {
-      path,
-      ...ppd,
-    });
-    //      console.log(path);
-    //      toRoadSegmentsAndPolygons(prefabs.get(token)!);
   }
   return prefabs;
 }
@@ -543,7 +704,7 @@ function processModelJson(
   );
   const modelTuples = Object.entries(modelDef).map(
     ([key, o]) =>
-      [key.split('.')[1], o.modelDesc?.substring(1)] as [
+      [key.replace('model.', ''), o.modelDesc?.substring(1)] as [
         string,
         string | undefined,
       ],
@@ -827,15 +988,9 @@ function processAchievementsJson(
     for (const a of Object.values(obj.achievementFerryData)) {
       achievements.set(a.achievementName, {
         type: 'ferryData',
-        ...(a.ferryType === 'all'
-          ? {
-              ferryType: 'all',
-              endpointA: assertExists(a.endpointA),
-              endpointB: assertExists(a.endpointB),
-            }
-          : {
-              ferryType: a.ferryType,
-            }),
+        endpointA: a.endpointA ?? '',
+        endpointB: a.endpointB ?? '',
+        ferryType: a.ferryType ?? 'all',
       });
     }
   }
@@ -914,9 +1069,11 @@ function processAchievementsJson(
 
 function processRouteJson(obj: RouteSii): Map<string, Route> {
   const routes = new Map<string, Route>();
-  for (const [key, route] of Object.entries(obj.routeData)) {
-    const routeKey = assertExists(key.split('.')[1]);
-    routes.set(routeKey, route);
+  if (obj.routeData) {
+    for (const [key, route] of Object.entries(obj.routeData)) {
+      const routeKey = key.split('.')[1];
+      routes.set(routeKey, route);
+    }
   }
   return routes;
 }
@@ -926,7 +1083,8 @@ function processMileageTargetJson(
 ): Map<string, MileageTarget> {
   const mileageTargets = new Map<string, MileageTarget>();
   for (const [key, rawTarget] of Object.entries(obj.mileageTarget)) {
-    const token = assertExists(key.split('.')[1]);
+    const token = key.split('.')[1];
+    if (!token) continue;
     let target: MileageTarget = {
       token: token,
       editorName: rawTarget.editorName,

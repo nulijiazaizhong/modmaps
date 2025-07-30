@@ -2,7 +2,7 @@ import type { JSONSchemaType } from 'ajv';
 import Ajv from 'ajv';
 import AjvKeywords from 'ajv-keywords';
 
-export const ajv = new Ajv();
+export const ajv = new Ajv({ coerceTypes: true });
 AjvKeywords(ajv, 'transform');
 
 // Workaround for bigint support
@@ -108,9 +108,9 @@ const numberTuple = fixedLengthArray(number, 2);
 const numberTriple = fixedLengthArray(number, 3);
 const numberQuadruple = fixedLengthArray(number, 4);
 const stringArray = arrayOf(string);
-const localeToken = stringPattern(/^@@.+@@$/);
+const localeToken = stringPattern(/^.*$/);
 const token = {
-  ...stringPattern(/^[0-9a-z_]{1,12}$/),
+  ...stringPattern(/^[.\w]+$/),
   // ETS2 has some country and city names (e.g. Hungary, Odense) as capitalized
   // tokens. Lowercase them so they're valid tokens.
   transform: ['toLowerCase'],
@@ -129,6 +129,7 @@ export interface VersionSii {
     }
   >;
 }
+
 export const VersionSiiSchema: JSONSchemaType<VersionSii> = object({
   fsPackSet: patternRecord(/^_nameless(\.[0-9a-z_]{1,12}){2}$/, {
     application: stringEnum('ats', 'eut2'),
@@ -145,8 +146,9 @@ export interface RouteSii {
     }
   >;
 }
+
 export const RouteSiiSchema: JSONSchemaType<RouteSii> = object({
-  routeData: patternRecord(/^route_data\.[0-9a-z_]{1,12}$/, {
+  routeData: patternRecord(/^route_data\.\w+$/, {
     fromCity: token,
     toCity: token,
   }),
@@ -265,9 +267,9 @@ export interface AchievementsSii {
     string,
     {
       achievementName: string;
-      ferryType: 'all' | 'train' | 'ferry';
       endpointA?: string;
       endpointB?: string;
+      ferryType?: 'all' | 'train' | 'ferry';
     }
   >;
   // referenced by achievementDelivery, e.g. ib_a_coruna
@@ -299,7 +301,7 @@ export const AchievementsSiiSchema: JSONSchemaType<AchievementsSii> = object(
       patternRecord(
         /^\.achievement\.[a-z]{2}_visit_[a-z]{3}$/,
         {
-          cities: nullable(stringArray), // Iowa pre-release data has missing `cities` field.
+          cities: nullable(stringArray),
           achievementName: string,
         },
         ['achievementName'],
@@ -379,7 +381,7 @@ export const AchievementsSiiSchema: JSONSchemaType<AchievementsSii> = object(
           endpointA: nullable(token),
           endpointB: nullable(token),
           achievementName: string,
-          ferryType: stringEnum('all', 'ferry', 'train'),
+          ferryType: nullable(stringEnum('all', 'ferry', 'train')),
         },
         ['achievementName'],
       ),
@@ -413,14 +415,17 @@ export interface IconMat {
   };
   material?: { ui: { texture: string } };
 }
+
 // Break up the above into separate interfaces to workaround some typing issues.
 interface IconMatRfx {
   texture: { texture: { source: string } };
 }
+
 interface IconMatSdfRfx {
   texture: { texture: { source: string } };
   aux: Tuple<Tuple<number, 4>, 5>;
 }
+
 const IconMatRfxSchema = object({
   texture: object({ texture: object({ source: string }) }),
 });
@@ -455,6 +460,7 @@ export interface LocalizationSii {
       | Record<string, never>;
   };
 }
+
 export const LocalizationSiiSchema: JSONSchemaType<LocalizationSii> = object({
   localizationDb: object({
     '.localization': object(
@@ -476,9 +482,10 @@ export interface FerrySii {
     }
   >;
 }
+
 export const FerrySiiSchema: JSONSchemaType<FerrySii> = object({
   ferryData: patternRecord(
-    /^ferry\.[0-9a-z_]{1,12}$/,
+    /^ferry\.\w+$/,
     {
       ferryName: string,
       ferryNameLocalized: nullable(localeToken),
@@ -490,8 +497,9 @@ export const FerrySiiSchema: JSONSchemaType<FerrySii> = object({
 export interface CompanySii {
   companyPermanent: Record<string, { name: string }>;
 }
+
 export const CompanySiiSchema: JSONSchemaType<CompanySii> = object({
-  companyPermanent: patternRecord(/^company\.permanent\.[0-9a-z_]{1,12}$/, {
+  companyPermanent: patternRecord(/^company\.permanent\.[0-9a-zA-Z_-]+$/, {
     name: string,
   }),
 });
@@ -508,49 +516,50 @@ export interface CountrySii {
     }
   >;
 }
+
 export const CountrySiiSchema: JSONSchemaType<CountrySii> = object(
   {
     countryData: nullable(
-      patternRecord(/^country\.data\.[0-9a-z_]{1,12}$/, {
-        name: string,
-        nameLocalized: localeToken,
-        countryCode: string,
-        countryId: integer,
-        pos: numberTriple,
-      }),
+      patternRecord(
+        /^country\.data\.\w+$/,
+        {
+          name: string,
+          nameLocalized: localeToken,
+          countryCode: string,
+          countryId: integer,
+          pos: numberTriple,
+        },
+        ['name'],
+      ),
     ),
   },
   [],
 );
 
 export interface CitySii {
-  cityData?: Record<
+  cityData: Record<
     string,
     {
       cityName: string;
-      cityNameLocalized: string;
+      cityNameLocalized?: string;
       country: string;
       population?: number;
     }
   >;
 }
-export const CitySiiSchema: JSONSchemaType<CitySii> = object(
-  {
-    cityData: nullable(
-      patternRecord(
-        /^city\.[0-9a-z_]{1,12}$/,
-        {
-          cityName: string,
-          cityNameLocalized: localeToken,
-          country: token,
-          population: nullable(integer),
-        },
-        ['cityName', 'cityNameLocalized', 'country'],
-      ),
-    ),
-  },
-  [],
-);
+
+export const CitySiiSchema: JSONSchemaType<CitySii> = object({
+  cityData: patternRecord(
+    /^city\.[.\wäöüÄÖÜßÇ]+$/,
+    {
+      cityName: string,
+      cityNameLocalized: nullable(localeToken),
+      country: token,
+      population: nullable(integer),
+    },
+    ['cityName', 'country'],
+  ),
+});
 
 export interface MileageTargetsSii {
   mileageTarget: Record<
@@ -567,11 +576,12 @@ export interface MileageTargetsSii {
     }
   >;
 }
+
 export const MileageTargetsSiiSchema: JSONSchemaType<MileageTargetsSii> =
   object(
     {
       mileageTarget: patternRecord(
-        /^mileage\.[0-9a-z_]{1,12}$/,
+        /^mileage\.\w+$/,
         {
           editorName: string,
           defaultName: string,
@@ -616,22 +626,17 @@ export interface ViewpointsSii {
     }
   >;
 }
+
 export const ViewpointsSiiSchema: JSONSchemaType<ViewpointsSii> = object({
-  photoAlbumItem: patternRecord(
-    /^album\.(viewpoints|landmarks)\.[0-9a-z_]{1,12}$/,
-    {
-      name: localeToken,
-      dlcId: token,
-      objectsUid: arrayOf(bigint),
-    },
-  ),
-  photoAlbumGroup: patternRecord(
-    /^album\.(viewpoints|landmarks)\.[0-9a-z_]{1,12}$/,
-    {
-      name: localeToken,
-      items: stringArray,
-    },
-  ),
+  photoAlbumItem: patternRecord(/^album\.(viewpoints|landmarks)\.\w+$/, {
+    name: localeToken,
+    dlcId: token,
+    objectsUid: arrayOf(bigint),
+  }),
+  photoAlbumGroup: patternRecord(/^album\.(viewpoints|landmarks)\.\w+$/, {
+    name: localeToken,
+    items: stringArray,
+  }),
 });
 
 interface FerryConnectionSii {
@@ -646,10 +651,11 @@ interface FerryConnectionSii {
     }
   >;
 }
+
 export const FerryConnectionSiiSchema: JSONSchemaType<FerryConnectionSii> =
   object({
     ferryConnection: patternRecord(
-      /^conn(\.[0-9a-z_]{1,12}){2}$/,
+      /^conn(\.\w+){2}$/,
       {
         price: number,
         time: number,
@@ -664,10 +670,11 @@ export const FerryConnectionSiiSchema: JSONSchemaType<FerryConnectionSii> =
 export interface PrefabSii {
   prefabModel?: Record<string, { prefabDesc: string; modelDesc: string }>;
 }
+
 export const PrefabSiiSchema: JSONSchemaType<PrefabSii> = object(
   {
     prefabModel: nullable(
-      patternRecord(/^prefab\.[0-9a-z_]{1,12}$/, {
+      patternRecord(/^prefab\.\w+$/, {
         prefabDesc: string,
         modelDesc: string,
       }),
@@ -677,16 +684,21 @@ export const PrefabSiiSchema: JSONSchemaType<PrefabSii> = object(
 );
 
 export interface ModelSii {
-  modelDef?: Record<string, { modelDesc?: string; vegetationModel?: string }>;
+  modelDef?: Record<
+    string,
+    { modelDesc?: string; vegetationModel?: string; category?: string }
+  >;
 }
+
 export const ModelSiiSchema: JSONSchemaType<ModelSii> = object(
   {
     modelDef: nullable(
       patternRecord(
-        /^model\.[0-9a-z_]{1,12}$/,
+        /^model\.[.\w]+$/,
         {
           modelDesc: nullable(string),
           vegetationModel: nullable(string),
+          category: nullable(string),
         },
         [],
       ),
@@ -696,7 +708,7 @@ export const ModelSiiSchema: JSONSchemaType<ModelSii> = object(
 );
 
 export interface RoadLookSii {
-  roadLook?: Record<
+  roadLook: Record<
     string,
     {
       name: string;
@@ -714,32 +726,28 @@ export interface RoadLookSii {
     }
   >;
 }
+
 // TODO do something with roadTemplateVariant (see road_look.template.sii)?
-export const RoadLookSiiSchema: JSONSchemaType<RoadLookSii> = object(
-  {
-    roadLook: nullable(
-      patternRecord(
-        /^road\.[0-9a-z_]{1,12}$/,
-        {
-          name: string,
-          lanesLeft: nullable(stringArray),
-          lanesRight: nullable(stringArray),
-          roadSizeLeft: nullable(number),
-          roadSizeRight: nullable(number),
-          roadOffset: nullable(number),
-          centerLineLeftOffset: nullable(number),
-          centerLineRightOffset: nullable(number),
-          shoulderSpaceLeft: nullable(number),
-          shoulderSpaceRight: nullable(number),
-          laneOffsetsLeft: nullable(arrayOf(numberTuple)),
-          laneOffsetsRight: nullable(arrayOf(numberTuple)),
-        },
-        ['name'],
-      ),
-    ),
-  },
-  [],
-);
+export const RoadLookSiiSchema: JSONSchemaType<RoadLookSii> = object({
+  roadLook: patternRecord(
+    /^road\.[0-9a-z_]{1,12}$/,
+    {
+      name: string,
+      lanesLeft: nullable(stringArray),
+      lanesRight: nullable(stringArray),
+      roadSizeLeft: nullable(number),
+      roadSizeRight: nullable(number),
+      roadOffset: nullable(number),
+      centerLineLeftOffset: nullable(number),
+      centerLineRightOffset: nullable(number),
+      shoulderSpaceLeft: nullable(number),
+      shoulderSpaceRight: nullable(number),
+      laneOffsetsLeft: nullable(arrayOf(numberTuple)),
+      laneOffsetsRight: nullable(arrayOf(numberTuple)),
+    },
+    ['name'],
+  ),
+});
 
 type AtsLaneSpeedClass = 'local_road' | 'divided_road' | 'freeway';
 type Ets2LaneSpeedClass =
@@ -748,6 +756,7 @@ type Ets2LaneSpeedClass =
   | 'motorway'
   | 'slow_road';
 type LaneSpeedClass = AtsLaneSpeedClass | Ets2LaneSpeedClass;
+
 export interface SpeedLimitsSii {
   countrySpeedLimit: {
     '.speed_limit.truck': {
@@ -755,50 +764,79 @@ export interface SpeedLimitsSii {
       laneSpeedClass: LaneSpeedClass[];
       limit: number[];
       urbanLimit: number[];
-      maxLimit: number[];
+      maxLimit?: number[];
     };
   };
 }
+
 export const SpeedLimitSiiSchema: JSONSchemaType<SpeedLimitsSii> = object({
   countrySpeedLimit: object({
-    ['.speed_limit.truck']: object({
-      laneSpeedClass: arrayOf(
-        stringEnum(
-          'local_road',
-          'divided_road',
-          'freeway',
-          'expressway',
-          'motorway',
-          'slow_road',
+    ['.speed_limit.truck']: object(
+      {
+        laneSpeedClass: arrayOf(
+          stringEnum(
+            'local_road',
+            'divided_road',
+            'freeway',
+            'expressway',
+            'motorway',
+            'slow_road',
+          ),
+          // truck speed limits, at minimum, define:
+          // - local_road
+          // - divided_road (or expressway, in ETS2)
+          // - freeway (or motorway, in ETS2)
+          { minItems: 3 },
         ),
-        // truck speed limits, at minimum, define:
-        // - local_road
-        // - divided_road (or expressway, in ETS2)
-        // - freeway (or motorway, in ETS2)
-        { minItems: 3 },
-      ),
-      limit: arrayOf(number),
-      urbanLimit: arrayOf(number),
-      maxLimit: arrayOf(number),
-    }),
+        limit: arrayOf(number),
+        urbanLimit: arrayOf(number),
+        maxLimit: nullable(arrayOf(number)),
+      },
+      ['laneSpeedClass', 'limit'],
+    ),
   }),
 });
 
 export interface CityCompanySii {
-  companyDef: Record<string, { city: string }>;
+  companyDef: Record<string, { city: string; prefab?: string }>;
 }
+
 export const CityCompanySiiSchema: JSONSchemaType<CityCompanySii> = object({
-  companyDef: patternRecord(/^\.[0-9a-z_]{1,12}$/, {
-    city: token,
-  }),
+  companyDef: patternRecord(
+    /^\w*\.?[.\w]+$/,
+    {
+      city: token,
+      prefab: nullable(string),
+    },
+    ['city'],
+  ),
 });
 
 export interface CargoSii {
-  cargoDef: Record<string, { cargo: string }>;
+  cargoDef?: Record<string, { cargo: string }>;
+  cargoData?: Record<string, { cargo: string }>;
 }
-export const CargoSiiSchema: JSONSchemaType<CargoSii> = object({
-  cargoDef: patternRecord(/^\.[0-9a-z_]{1,12}$/, {
-    // Note: more information (like l18n strings) for `cargo.foo` can be found in defs/cargo/foo.sui.
-    cargo: stringPattern(/^cargo\.[0-9a-z_]{1,12}$/),
-  }),
-});
+
+export const CargoSiiSchema: JSONSchemaType<CargoSii> = {
+  type: 'object',
+  anyOf: [
+    {
+      type: 'object',
+      properties: {
+        cargoDef: patternRecord(/^(_nameless)?\.?[.\w]+$/, {
+          // Note: more information (like l18n strings) for `cargo.foo` can be found in defs/cargo/foo.sui.
+          cargo: stringPattern(/^cargo\.(\.|-|\w)+$/),
+        }),
+      },
+    },
+    {
+      type: 'object',
+      properties: {
+        cargoData: patternRecord(/^(_nameless)?\.?[.\w]+$/, {
+          // Note: more information (like l18n strings) for `cargo.foo` can be found in defs/cargo/foo.sui.
+          cargo: stringPattern(/^cargo\.(\.|-|\w)+$/),
+        }),
+      },
+    },
+  ],
+};

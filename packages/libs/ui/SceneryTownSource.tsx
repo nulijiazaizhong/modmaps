@@ -10,6 +10,7 @@ export const ets2SceneryTownsUrl = `/ets2-villages.geojson`;
 export const enum StateCode {
   AR = 'AR',
   AZ = 'AZ',
+  BC = 'BC',
   CA = 'CA',
   CO = 'CO',
   IA = 'IA',
@@ -30,6 +31,7 @@ export const enum StateCode {
 const states: Record<StateCode, void> = {
   [StateCode.AR]: undefined,
   [StateCode.AZ]: undefined,
+  [StateCode.BC]: undefined,
   [StateCode.CA]: undefined,
   [StateCode.CO]: undefined,
   [StateCode.IA]: undefined,
