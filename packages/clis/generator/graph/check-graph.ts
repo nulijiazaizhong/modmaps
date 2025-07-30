@@ -11,7 +11,7 @@ import type { CompanyItem, Neighbors } from '@truckermudgeon/map/types';
 import * as cliProgress from 'cli-progress';
 import Tinypool from 'tinypool';
 import { logger } from '../logger';
-import type { MappedData } from '../mapped-data';
+import type { MappedDataForKeys } from '../mapped-data';
 
 interface CompanySummary {
   company: string;
@@ -25,18 +25,20 @@ interface Unrouteable {
   end: CompanySummary;
 }
 
+type CheckGraphMappedData = MappedDataForKeys<
+  ['nodes', 'companies', 'prefabs', 'cities']
+>;
+
 export async function checkGraph(
-  graph: Map<string, Neighbors>,
-  tsMapData: MappedData,
+  graph: Map<bigint, Neighbors>,
+  tsMapData: CheckGraphMappedData,
 ) {
   const { map, nodes, companies, prefabs, cities } = tsMapData;
 
   // check that all companies in known cities can be reached from some
   // random company.
   const allCompanies = [...companies.values()].filter(
-    company =>
-      cities.has(company.cityToken) &&
-      prefabs.has(company.prefabUid.toString(16)),
+    company => cities.has(company.cityToken) && prefabs.has(company.prefabUid),
   );
   const originCompany =
     allCompanies[Math.floor(Math.random() * allCompanies.length)];
@@ -78,8 +80,8 @@ export async function checkGraph(
       promises.push(
         pool
           .run({
-            startNodeUid: start.nodeUid.toString(16),
-            endNodeUid: end.nodeUid.toString(16),
+            startNodeUid: start.nodeUid,
+            endNodeUid: end.nodeUid,
           })
           .then((route: Route) => {
             if (!route.success) {

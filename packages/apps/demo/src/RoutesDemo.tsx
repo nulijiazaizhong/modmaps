@@ -31,9 +31,9 @@ import {
   allIcons,
   defaultMapStyle,
 } from '@truckermudgeon/ui';
+import type { GeoJSONSource } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { useCallback, useEffect, useState } from 'react';
-import type { GeoJSONSource } from 'react-map-gl';
 import type { MapRef } from 'react-map-gl/maplibre';
 import MapGl, {
   AttributionControl,
@@ -47,7 +47,8 @@ import { Legend, createListProps } from './Legend';
 import { ModeControl } from './ModeControl';
 import { toStateCodes } from './state-codes';
 
-const RoutesDemo = () => {
+const RoutesDemo = (props: { tileRootUrl: string }) => {
+  const { tileRootUrl } = props;
   const { mode: _maybeMode, systemMode } = useColorScheme();
   const mode = _maybeMode === 'system' ? systemMode : _maybeMode;
   const [autoHide, setAutoHide] = useState(true);
@@ -81,6 +82,7 @@ const RoutesDemo = () => {
         [-84, 54], // northeast corner (lon, lat)
       ]}
       mapStyle={defaultMapStyle}
+      attributionControl={false}
       // start off in vegas
       initialViewState={{
         longitude: -115,
@@ -88,10 +90,15 @@ const RoutesDemo = () => {
         zoom: 9,
       }}
     >
-      <BaseMapStyle mode={mode}>
-        <ContoursStyle game={'ats'} showContours={showContours} />
+      <BaseMapStyle tileRootUrl={tileRootUrl} mode={mode}>
+        <ContoursStyle
+          tileRootUrl={tileRootUrl}
+          game={'ats'}
+          showContours={showContours}
+        />
       </BaseMapStyle>
       <GameMapStyle
+        tileRootUrl={tileRootUrl}
         game={'ats'}
         mode={mode}
         enableIconAutoHide={autoHide}
@@ -172,7 +179,7 @@ export interface CompanyOption {
   label: string;
   // city token
   city: string;
-  // node uid
+  // base36 node uid
   value: string;
 }
 
@@ -227,7 +234,7 @@ const RouteControl = (props: { dlcs: ReadonlySet<AtsSelectableDlc> }) => {
       }
       if (end != null) {
         const routeSource = assertExists(
-          map.getSource('route1') as GeoJSONSource | undefined,
+          map.getSource<GeoJSONSource>('route1'),
         );
         routeSource.setData({
           type: 'FeatureCollection',
@@ -238,7 +245,7 @@ const RouteControl = (props: { dlcs: ReadonlySet<AtsSelectableDlc> }) => {
 
       if (matchingCompany) {
         const matchingNode = assertExists(
-          context.nodeLUT.get(matchingCompany.n),
+          context.nodeLUT.get(BigInt(parseInt(matchingCompany.n, 36))),
         );
         map.flyTo({
           curve: 1,
@@ -275,7 +282,7 @@ const RouteControl = (props: { dlcs: ReadonlySet<AtsSelectableDlc> }) => {
     ]).then(
       maybeLineStrings => {
         const routeSource = assertExists(
-          map.getSource('route1') as GeoJSONSource | undefined,
+          map.getSource<GeoJSONSource>('route1'),
         );
         if (maybeLineStrings.some(s => s == null)) {
           alert('Cannot calculate a route 🙁');
@@ -310,6 +317,7 @@ const RouteControl = (props: { dlcs: ReadonlySet<AtsSelectableDlc> }) => {
     );
   };
 
+  // base36 node UID to dlc guard
   const dlcGuards = new Map<string, number>();
   if (demoData) {
     for (const [, neighbors] of demoData.demoGraph) {
@@ -395,16 +403,16 @@ function formatGroupLabel(params: AutocompleteRenderGroupParams) {
 }
 
 function toContext(data: DemoRoutesData): Omit<Context, 'enabledDlcGuards'> {
-  const graph = new Map<string, Neighbors>();
-  const nodeLUT = new Map<string, PartialNode>();
+  const graph = new Map<bigint, Neighbors>();
+  const nodeLUT = new Map<bigint, PartialNode>();
   for (const [id, dns] of data.demoGraph) {
-    graph.set(id, {
+    graph.set(BigInt(parseInt(id, 36)), {
       forward: (dns.f ?? []).map(toNeighbor),
       backward: (dns.b ?? []).map(toNeighbor),
     });
   }
   for (const [id, pos] of data.demoNodes) {
-    nodeLUT.set(id, { x: pos[0], y: pos[1] });
+    nodeLUT.set(BigInt(parseInt(id, 36)), { x: pos[0], y: pos[1] });
   }
 
   return {
@@ -415,7 +423,7 @@ function toContext(data: DemoRoutesData): Omit<Context, 'enabledDlcGuards'> {
 
 function toNeighbor(demoNeighbor: DemoNeighbor): Neighbor {
   return {
-    nodeId: demoNeighbor.n,
+    nodeUid: BigInt(parseInt(demoNeighbor.n, 36)),
     distance: demoNeighbor.l,
     isOneLaneRoad: demoNeighbor.o,
     direction: demoNeighbor.d === 'f' ? 'forward' : 'backward',
@@ -438,7 +446,13 @@ function fakeFind(
   context: Context,
 ): Promise<GeoJSON.Feature | undefined> {
   return new Promise(resolve => {
-    const route = findRoute(startNodeUid, endNodeUid, 'forward', mode, context);
+    const route = findRoute(
+      BigInt(parseInt(startNodeUid, 36)),
+      BigInt(parseInt(endNodeUid, 36)),
+      'forward',
+      mode,
+      context,
+    );
     if (!route.success) {
       resolve(undefined);
       return;
@@ -449,7 +463,7 @@ function fakeFind(
       geometry: {
         type: 'LineString',
         coordinates: route.route.map(neighbor => {
-          const node = assertExists(context.nodeLUT.get(neighbor.nodeId));
+          const node = assertExists(context.nodeLUT.get(neighbor.nodeUid));
           return [node.x, node.y];
         }),
       },

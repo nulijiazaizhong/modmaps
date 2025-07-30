@@ -17,6 +17,7 @@ npm-debug.log*
 tsconfig.tsbuildinfo
 .eslintcache
 *storybook.log
+*.local
 /packages/clis/parser/test.ts
 /data/
 /packages/clis/parser/log.txt

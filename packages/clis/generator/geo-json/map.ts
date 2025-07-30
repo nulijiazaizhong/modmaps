@@ -1,7 +1,13 @@
 import { assert, assertExists } from '@truckermudgeon/base/assert';
 import { areSetsEqual } from '@truckermudgeon/base/equals';
 import type { Position } from '@truckermudgeon/base/geom';
-import { distance, midPoint, toSplinePoints } from '@truckermudgeon/base/geom';
+import {
+  center,
+  distance,
+  getExtent,
+  midPoint,
+  toSplinePoints,
+} from '@truckermudgeon/base/geom';
 import { mapValues, putIfAbsent } from '@truckermudgeon/base/map';
 import { Preconditions } from '@truckermudgeon/base/precon';
 import { isLabeledPoi } from '@truckermudgeon/map/constants';
@@ -32,15 +38,18 @@ import type {
   RoadLook,
   RoadLookProperties,
   RoadType,
+  TrafficFeature,
+  WithPath,
+  WithToken,
 } from '@truckermudgeon/map/types';
 import * as turf from '@turf/helpers';
 import lineOffset from '@turf/line-offset';
 import type { Quadtree } from 'd3-quadtree';
 import { quadtree } from 'd3-quadtree';
 import type { GeoJSON } from 'geojson';
-import { normalizeDlcGuards } from '../dlc-guards';
+import { dlcGuardMapDataKeys, normalizeDlcGuards } from '../dlc-guards';
 import { logger } from '../logger';
-import type { MappedData } from '../mapped-data';
+import type { MapDataKeys, MappedDataForKeys } from '../mapped-data';
 import { createNormalizeFeature } from './normalize';
 import { ets2IsoA2, getCitiesByCountryIsoA2 } from './populated-places';
 
@@ -58,11 +67,28 @@ interface QtRoadEntry {
 }
 type RoadQuadTree = Quadtree<QtRoadEntry>;
 
+export const geoJsonMapDataKeys = [
+  ...dlcGuardMapDataKeys,
+  'nodes',
+  'roads',
+  'ferries',
+  'prefabs',
+  'mapAreas',
+  'dividers',
+  'pois',
+  'cities',
+  'countries',
+  'roadLooks',
+  'prefabDescriptions',
+] satisfies MapDataKeys;
+
+type GeoJsonMappedData = MappedDataForKeys<typeof geoJsonMapDataKeys>;
+
 /**
  * Converts TSMapData into a GeoJSON FeatureCollection.
  */
 export function convertToMapGeoJson(
-  tsMapData: MappedData,
+  tsMapData: GeoJsonMappedData,
   options: {
     includeDebug: boolean;
     skipCoalescing: boolean;
@@ -100,7 +126,7 @@ export function convertToMapGeoJson(
   let lutSize = 0;
   const prefabNodeUids = new Set<bigint>(
     prefabs.values().flatMap(p => {
-      assert(p.nodeUids.every(uid => nodes.has(uid.toString())));
+      assert(p.nodeUids.every(uid => nodes.has(uid)));
       return p.nodeUids;
     }),
   );
@@ -173,12 +199,8 @@ export function convertToMapGeoJson(
   logger.log('creating dividers...');
   const dividerFeatures: GeoJSON.Feature<GeoJSON.LineString>[] = [];
   for (const d of dividers.values()) {
-    const startNode = Preconditions.checkExists(
-      nodes.get(d.startNodeUid.toString(16)),
-    );
-    const endNode = Preconditions.checkExists(
-      nodes.get(d.endNodeUid.toString(16)),
-    );
+    const startNode = Preconditions.checkExists(nodes.get(d.startNodeUid));
+    const endNode = Preconditions.checkExists(nodes.get(d.endNodeUid));
     const points = toSplinePoints(
       {
         position: [startNode.x, startNode.y],
@@ -191,12 +213,12 @@ export function convertToMapGeoJson(
     );
     const properties = {
       type: 'divider-' + d.type,
-      startNodeUid: d.startNodeUid.toString(16),
-      endNodeUid: d.endNodeUid.toString(16),
+      startNodeUid: d.startNodeUid,
+      endNodeUid: d.endNodeUid,
     };
     dividerFeatures.push({
       type: 'Feature',
-      id: d.uid.toString(),
+      id: d.uid.toString(16),
       properties,
       geometry: {
         type: 'LineString',
@@ -394,14 +416,14 @@ export function convertToMapGeoJson(
         if (roadA == null) {
           logger.error(
             'could not find road to fuse for prefab start',
-            p.uid.toString(),
+            p.uid.toString(16),
           );
           continue;
         }
         if (roadB == null) {
           logger.error(
             'could not find road to fuse for prefab end',
-            p.uid.toString(),
+            p.uid.toString(16),
           );
           continue;
         }
@@ -554,6 +576,14 @@ export function convertToMapGeoJson(
   logger.log('creating pois...');
   const poiFeatures = pois.map(p => poiToFeature(p));
 
+  logger.log('creating traffic-y features...');
+  const trafficFeatures = createTrafficFeatures(
+    map,
+    nodes,
+    prefabs,
+    prefabDescriptions,
+  );
+
   const debugCityAreaFeatures: DebugFeature[] = [];
   const debugNodeFeatures: DebugFeature[] = [];
   if (options.includeDebug) {
@@ -565,9 +595,9 @@ export function convertToMapGeoJson(
         properties: {
           type: 'debug',
           name: 'node',
-          nodeId: n.uid.toString(16),
-          nodeForwardItemId: n.forwardItemUid.toString(16),
-          nodeBackwardItemId: n.backwardItemUid.toString(16),
+          nodeUid: n.uid,
+          nodeForwardItemUid: n.forwardItemUid,
+          nodeBackwardItemUid: n.backwardItemUid,
         },
         geometry: {
           type: 'Point',
@@ -585,6 +615,7 @@ export function convertToMapGeoJson(
     ...cityFeatures.map(c => withDlcGuard(c, dlcGuardQuadTree)),
     ...countryFeatures,
     ...poiFeatures.map(p => withDlcGuard(p, dlcGuardQuadTree)),
+    ...trafficFeatures,
     //...dividerFeatures,
     ...debugNodeFeatures,
     ...ferryFeatures,
@@ -621,6 +652,60 @@ function withDlcGuard<T extends CityFeature | PoiFeature>(
   return feature;
 }
 
+function createTrafficFeatures(
+  map: 'usa' | 'europe',
+  nodes: ReadonlyMap<bigint, Node>,
+  prefabs: ReadonlyMap<bigint, Prefab>,
+  prefabDescriptions: ReadonlyMap<
+    string,
+    WithToken<WithPath<PrefabDescription>>
+  >,
+): TrafficFeature[] {
+  const features: TrafficFeature[] = [];
+
+  let roadworkCount = 0;
+  let railCrossingCount = 0;
+
+  for (const p of prefabs.values()) {
+    if (p.hidden) {
+      continue;
+    }
+
+    const pd = assertExists(prefabDescriptions.get(p.token));
+    if (pd.path.includes('/roadwork/')) {
+      assert(p.nodeUids.length === 2);
+      const nodePoints = p.nodeUids.map(nid => assertExists(nodes.get(nid)));
+      features.push(
+        turf.point(midPoint(nodePoints[0], nodePoints[1]), {
+          type: 'traffic',
+          sprite: 'roadwork',
+          dlcGuard: p.dlcGuard,
+        }),
+      );
+      roadworkCount++;
+    } else if (
+      (map === 'usa' && pd.path.includes('_xrail_')) ||
+      (map === 'europe' && /[_/]rail\d_x_road/.test(pd.path))
+    ) {
+      assert(p.nodeUids.length >= 4);
+      const nodePoints = p.nodeUids.map(nid => assertExists(nodes.get(nid)));
+      features.push(
+        turf.point(center(getExtent(nodePoints)), {
+          type: 'traffic',
+          sprite: 'railcrossing',
+          dlcGuard: p.dlcGuard,
+        }),
+      );
+      railCrossingCount++;
+    }
+  }
+
+  logger.info(roadworkCount, 'road work points');
+  logger.info(railCrossingCount, 'railroad crossing points');
+
+  return features;
+}
+
 /**
  * Joins adjacent `roadFeature`s together if their ends are close to each other,
  * and if their properties are compatible.
@@ -628,8 +713,8 @@ function withDlcGuard<T extends CityFeature | PoiFeature>(
 function coalesceRoadFeatures(roadFeatures: RoadFeature[]): RoadFeature[] {
   logger.log('coalescing road features...');
 
-  const heads = new Map<string, RoadFeature[]>();
-  const tails = new Map<string, RoadFeature[]>();
+  const heads = new Map<bigint, RoadFeature[]>();
+  const tails = new Map<bigint, RoadFeature[]>();
   for (const f of roadFeatures) {
     if (f.properties.startNodeUid) {
       putIfAbsent(f.properties.startNodeUid, [], heads).push(f);
@@ -790,7 +875,7 @@ function coalesceRoadFeatures(roadFeatures: RoadFeature[]): RoadFeature[] {
 
 function areaToFeature(
   area: MapArea,
-  nodeMap: ReadonlyMap<string | bigint, Node>,
+  nodeMap: ReadonlyMap<bigint, Node>,
 ): MapAreaFeature {
   const points = area.nodeUids.map(id => {
     const node = assertExists(nodeMap.get(id));
@@ -800,7 +885,7 @@ function areaToFeature(
   points.push(points[0]);
   return {
     type: 'Feature',
-    id: area.uid.toString(),
+    id: area.uid.toString(16),
     properties: {
       type: 'mapArea',
       dlcGuard: area.dlcGuard,
@@ -954,6 +1039,7 @@ function poiToFeature(poi: Poi): PoiFeature {
       poiType: poi.type,
       poiName: isLabeledPoi(poi) ? poi.label : undefined,
       dlcGuard: 'dlcGuard' in poi ? poi.dlcGuard : undefined,
+      prefabUid: 'prefabUid' in poi ? poi.prefabUid : undefined,
     },
     geometry: {
       type: 'Point',
@@ -1029,9 +1115,9 @@ function prefabToFeatures(
     polygons: Polygon[];
     roadStrings: RoadString[];
   },
-  nodes: ReadonlyMap<string | bigint, Node>,
+  nodes: ReadonlyMap<bigint, Node>,
   // TODO make use of this to better position roads within a prefab
-  _roadMap: ReadonlyMap<string, Road>,
+  _roadMap: ReadonlyMap<bigint, Road>,
   roadLookMap: ReadonlyMap<string, RoadLook>,
   roadQuadTree: Quadtree<{ x: number; y: number; roadLookToken: string }>,
   opts: {
@@ -1152,8 +1238,8 @@ function prefabToFeatures(
           leftLanes: road.lanesLeft,
           rightLanes: road.lanesRight,
           hidden: !!prefab.hidden,
-          startNodeUid: findClosestNode(txPoints[0])?.uid.toString(16),
-          endNodeUid: findClosestNode(txPoints.at(-1)!)?.uid.toString(16),
+          startNodeUid: findClosestNode(txPoints[0])?.uid,
+          endNodeUid: findClosestNode(txPoints.at(-1)!)?.uid,
         },
         geometry: {
           type: 'LineString',
@@ -1167,8 +1253,7 @@ function prefabToFeatures(
 function roadToFeature(
   road: Road,
   roadLook: RoadLook,
-  nodes: ReadonlyMap<bigint | string, Node>,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  nodes: ReadonlyMap<bigint, Node>,
   _dividerFeatures: GeoJSON.Feature<GeoJSON.LineString>[],
 ): RoadFeature[] {
   const startNode = Preconditions.checkExists(nodes.get(road.startNodeUid));
@@ -1187,8 +1272,8 @@ function roadToFeature(
     ...roadLookToProperties(roadLook, !!road.hidden),
     lookToken: road.roadLookToken,
     dlcGuard: road.dlcGuard,
-    startNodeUid: road.startNodeUid.toString(16),
-    endNodeUid: road.endNodeUid.toString(16),
+    startNodeUid: road.startNodeUid,
+    endNodeUid: road.endNodeUid,
   };
 
   // TODO look into splitting roads by dividers (a.k.a., "center kerbs").
@@ -1197,7 +1282,7 @@ function roadToFeature(
   //  // it may still be divided partway, though. check for that.
   //  const r: RoadFeature = {
   //    type: 'Feature',
-  //    id: road.uid.toString(),
+  //    id: road.uid.toString(16),
   //    properties,
   //    geometry: {
   //      type: 'LineString',
@@ -1230,7 +1315,7 @@ function roadToFeature(
     return [
       {
         type: 'Feature',
-        id: road.uid.toString(),
+        id: road.uid.toString(16),
         properties: {
           ...properties,
           //maybeDivided: road.maybeDivided === true,
@@ -1260,7 +1345,7 @@ function roadToFeature(
   return [
     {
       type: 'Feature',
-      id: road.uid.toString(),
+      id: road.uid.toString(16),
       properties: {
         ...properties,
         leftLanes: 0,
@@ -1273,7 +1358,7 @@ function roadToFeature(
     },
     {
       type: 'Feature',
-      id: road.uid.toString(),
+      id: road.uid.toString(16),
       properties: {
         ...properties,
         rightLanes: 0,

@@ -17,7 +17,7 @@ import type {
 } from '@truckermudgeon/map/types';
 import { normalizeDlcGuards } from '../dlc-guards';
 import { logger } from '../logger';
-import type { MappedData } from '../mapped-data';
+import type { MapDataKeys, MappedDataForKeys } from '../mapped-data';
 import { createNormalizeFeature } from './normalize';
 
 interface Point {
@@ -25,7 +25,26 @@ interface Point {
   dlcGuard: number;
 }
 
-export function convertToAchievementsGeoJson(tsMapData: MappedData) {
+export const achievementsMapDataKeys = [
+  'achievements',
+  'cities',
+  'companies',
+  'countries',
+  'cutscenes',
+  'ferries',
+  'mapAreas',
+  'nodes',
+  'pois',
+  'prefabs',
+  'roads',
+  'routes',
+  'trajectories',
+  'triggers',
+] satisfies MapDataKeys;
+
+type AchievementsMapData = MappedDataForKeys<typeof achievementsMapDataKeys>;
+
+export function convertToAchievementsGeoJson(tsMapData: AchievementsMapData) {
   const {
     map,
     nodes,
@@ -80,7 +99,7 @@ export function convertToAchievementsGeoJson(tsMapData: MappedData) {
     if (!company) {
       return;
     }
-    const node = assertExists(nodes.get(company.nodeUid.toString(16)));
+    const node = assertExists(nodes.get(company.nodeUid));
     return {
       coordinates: node,
       dlcGuard: getDlcGuard(node),
@@ -165,7 +184,7 @@ export function convertToAchievementsGeoJson(tsMapData: MappedData) {
       // TODO use other points in Trigger to draw a circle or polygon
       const firstNodeUid =
         item.type === ItemType.Trigger ? item.nodeUids[0] : item.nodeUid;
-      const node = assertExists(nodes.get(firstNodeUid.toString(16)));
+      const node = assertExists(nodes.get(firstNodeUid));
       return {
         coordinates: node,
         dlcGuard: getDlcGuard(item),
@@ -175,33 +194,36 @@ export function convertToAchievementsGeoJson(tsMapData: MappedData) {
   const ferryAchievementToPoints = (
     achievement: Achievement & { type: 'ferryData' },
   ): Point[] => {
-    if (achievement.endpointA && achievement.endpointB) {
-      const aFerry = ferries.get(achievement.endpointA);
-      const bFerry = ferries.get(achievement.endpointB);
-      if (aFerry == null || bFerry == null) {
-        return [];
+    switch (achievement.ferryType) {
+      case undefined:
+      case 'all': {
+        const aFerry = ferries.get(achievement.endpointA);
+        const bFerry = ferries.get(achievement.endpointB);
+        if (aFerry == null || bFerry == null) {
+          return [];
+        }
+
+        const aDlcGuard = getDlcGuard(aFerry);
+        const bDlcGuard = getDlcGuard(bFerry);
+        const dlcGuard = calcDlcGuard(aDlcGuard, bDlcGuard);
+        return [
+          { coordinates: aFerry, dlcGuard },
+          { coordinates: bFerry, dlcGuard },
+        ];
       }
-
-      const aDlcGuard = getDlcGuard(aFerry);
-      const bDlcGuard = getDlcGuard(bFerry);
-      const dlcGuard = calcDlcGuard(aDlcGuard, bDlcGuard);
-      return [
-        { coordinates: aFerry, dlcGuard },
-        { coordinates: bFerry, dlcGuard },
-      ];
+      case 'ferry':
+      case 'train': {
+        const ferriesByType = [...ferries.values()].filter(
+          f => f.train === (achievement.ferryType === 'train'),
+        );
+        return ferriesByType.map(f => ({
+          coordinates: f,
+          dlcGuard: getDlcGuard(f),
+        }));
+      }
+      default:
+        throw new UnreachableError(achievement);
     }
-
-    if (achievement.ferryType) {
-      const ferriesByType = [...ferries.values()].filter(
-        f => f.train === (achievement.ferryType === 'train'),
-      );
-      return ferriesByType.map(f => ({
-        coordinates: f,
-        dlcGuard: getDlcGuard(f),
-      }));
-    }
-
-    return [];
   };
 
   const deliveryPointAchievementToPoints = (
@@ -313,11 +335,9 @@ export function convertToAchievementsGeoJson(tsMapData: MappedData) {
       const points: Point[] = [];
       switch (a.type) {
         case 'visitCityData':
-          if (a.cities) {
-            points.push(
-              ...a.cities.filter(t => cities.has(t)).map(cityTokenToPoint),
-            );
-          }
+          points.push(
+            ...a.cities.filter(t => cities.has(t)).map(cityTokenToPoint),
+          );
           break;
         case 'delivery':
           points.push(...deliveryAchievementToPoints(a));

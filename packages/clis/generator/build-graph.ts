@@ -59,7 +59,31 @@ async function main() {
     .parseSync();
 
   const tsMapData = readMapData(args.inputDir, args.map, {
-    includeHidden: false,
+    mapDataKeys: [
+      'nodes',
+      'roads',
+      'roadLooks',
+      'prefabs',
+      'prefabDescriptions',
+      'companies',
+      'ferries',
+      'cities',
+      'countries',
+      'companyDefs',
+      'achievements',
+      'trajectories',
+      'triggers',
+      'cutscenes',
+      'routes',
+      'mileageTargets',
+      'pois',
+      'elevation',
+      'mapAreas',
+      'dividers',
+      'models',
+      'modelDescriptions',
+    ],
+    includeHiddenRoadsAndPrefabs: false,
   });
 
   const graph = generateGraph(tsMapData);

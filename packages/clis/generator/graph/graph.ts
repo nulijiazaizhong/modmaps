@@ -12,27 +12,40 @@ import type {
   Prefab,
 } from '@truckermudgeon/map/types';
 import { quadtree } from 'd3-quadtree';
-import { normalizeDlcGuards } from '../dlc-guards';
+import { dlcGuardMapDataKeys, normalizeDlcGuards } from '../dlc-guards';
 import { logger } from '../logger';
-import type { MappedData } from '../mapped-data';
+import type { MapDataKeys, MappedDataForKeys } from '../mapped-data';
 
-type Context = Pick<
-  MappedData,
-  | 'map'
-  | 'nodes'
-  | 'roads'
-  | 'roadLooks'
-  | 'prefabs'
-  | 'prefabDescriptions'
-  | 'companies'
-  | 'ferries'
-> & {
+type GraphContextMappedData = MappedDataForKeys<
+  [
+    'nodes',
+    'roads',
+    'roadLooks',
+    'prefabs',
+    'prefabDescriptions',
+    'companies',
+    'ferries',
+  ]
+>;
+
+type Context = GraphContextMappedData & {
   prefabConnections: Map<string, Map<number, number[]>>;
-  companiesByPrefabItemId: Map<string, CompanyItem>;
+  companiesByPrefabItemId: Map<bigint, CompanyItem>;
   getDlcGuard: (node: Node) => number;
 };
 
-export function generateGraph(tsMapData: MappedData) {
+export const graphMapDataKeys = [
+  ...dlcGuardMapDataKeys,
+  'companies',
+  'ferries',
+  'prefabDescriptions',
+  'roadLooks',
+  'cities',
+] satisfies MapDataKeys;
+
+type GraphMappedData = MappedDataForKeys<typeof graphMapDataKeys>;
+
+export function generateGraph(tsMapData: GraphMappedData) {
   const {
     map,
     nodes: _nodes,
@@ -59,14 +72,11 @@ export function generateGraph(tsMapData: MappedData) {
     ),
   );
   const companiesByPrefabItemId = new Map(
-    [...companies.values()].map(companyItem => [
-      companyItem.prefabUid.toString(16),
-      companyItem,
-    ]),
+    companies.values().map(companyItem => [companyItem.prefabUid, companyItem]),
   );
 
   for (const company of companies.values()) {
-    if (!prefabs.has(company.prefabUid.toString(16))) {
+    if (!prefabs.has(company.prefabUid)) {
       logger.warn(
         'could not find prefab for company',
         company.token,
@@ -75,13 +85,12 @@ export function generateGraph(tsMapData: MappedData) {
     }
   }
 
-  const toSectorKey = (o: { sectorX: number; sectorY: number }) =>
-    `${o.sectorX},${o.sectorY}`;
+  const toSectorKey = (o: { x: number; y: number }) =>
+    `${Math.floor(o.x / 4000)},${Math.floor(o.y / 4000)}`;
   const nodesBySector = new Map<string, Node[]>();
-  const getRoadOrPrefab = (id: string) => roads.get(id) ?? prefabs.get(id);
+  const getRoadOrPrefab = (id: bigint) => roads.get(id) ?? prefabs.get(id);
   for (const node of nodes.values()) {
-    const forwardItemUid = node.forwardItemUid.toString(16);
-    const backwardItemUid = node.backwardItemUid.toString(16);
+    const { forwardItemUid, backwardItemUid } = node;
     const connectedItem =
       getRoadOrPrefab(forwardItemUid) ?? getRoadOrPrefab(backwardItemUid);
     if (connectedItem) {
@@ -94,16 +103,14 @@ export function generateGraph(tsMapData: MappedData) {
   const unconnectedCompanyPrefabs: Prefab[] = [];
   const allPrefabs = [...prefabs.values()];
   for (const prefab of allPrefabs) {
-    const prefabNodes = prefab.nodeUids.map(id =>
-      assertExists(nodes.get(id.toString(16))),
-    );
+    const prefabNodes = prefab.nodeUids.map(id => assertExists(nodes.get(id)));
     if (
       prefabNodes.every(
         node =>
           (node.forwardItemUid === prefab.uid &&
-            getRoadOrPrefab(node.backwardItemUid.toString(16)) == null) ||
+            getRoadOrPrefab(node.backwardItemUid) == null) ||
           (node.backwardItemUid === prefab.uid &&
-            getRoadOrPrefab(node.forwardItemUid.toString(16)) == null),
+            getRoadOrPrefab(node.forwardItemUid) == null),
       )
     ) {
       const otherNodes = assertExists(
@@ -112,15 +119,15 @@ export function generateGraph(tsMapData: MappedData) {
       const nodesLinkingToPrefab = otherNodes.filter(
         n =>
           (n.forwardItemUid === prefab.uid &&
-            getRoadOrPrefab(n.backwardItemUid.toString(16)) != null) ||
+            getRoadOrPrefab(n.backwardItemUid) != null) ||
           (n.backwardItemUid === prefab.uid &&
-            getRoadOrPrefab(n.forwardItemUid.toString(16)) != null),
+            getRoadOrPrefab(n.forwardItemUid) != null),
       );
 
       if (nodesLinkingToPrefab.length === 0) {
-        prefabs.delete(prefab.uid.toString(16));
+        prefabs.delete(prefab.uid);
         // delete prefab nodes from `nodes` map
-        prefab.nodeUids.forEach(id => nodes.delete(id.toString(16)));
+        prefab.nodeUids.forEach(id => nodes.delete(id));
         // delete prefab nodes from `nodesBySector`
         const prefabNodeUids = new Set(prefab.nodeUids);
         const otherNodesMinusPrefabNodes = otherNodes.filter(
@@ -128,7 +135,7 @@ export function generateGraph(tsMapData: MappedData) {
         );
         nodesBySector.set(toSectorKey(prefab), otherNodesMinusPrefabNodes);
 
-        if (companiesByPrefabItemId.has(prefab.uid.toString(16))) {
+        if (companiesByPrefabItemId.has(prefab.uid)) {
           unconnectedCompanyPrefabs.push(prefab);
         }
       }
@@ -155,7 +162,7 @@ export function generateGraph(tsMapData: MappedData) {
 
   // keyed by node uids
   const graph = new Map<
-    string,
+    bigint,
     { forward: Neighbor[]; backward: Neighbor[] }
   >();
   for (const node of nodes.values()) {
@@ -165,7 +172,7 @@ export function generateGraph(tsMapData: MappedData) {
     };
     const hasNeighbors = neighbors.forward.length || neighbors.backward.length;
     if (hasNeighbors) {
-      graph.set(node.uid.toString(16), neighbors);
+      graph.set(node.uid, neighbors);
     }
   }
 
@@ -183,23 +190,21 @@ export function generateGraph(tsMapData: MappedData) {
   for (const [nodeId, edges] of graph.entries()) {
     const node = assertExists(nodes.get(nodeId));
     const forwardItem =
-      roads.get(node.forwardItemUid.toString(16)) ??
-      prefabs.get(node.forwardItemUid.toString(16));
+      roads.get(node.forwardItemUid) ?? prefabs.get(node.forwardItemUid);
     const backwardItem =
-      roads.get(node.backwardItemUid.toString(16)) ??
-      prefabs.get(node.backwardItemUid.toString(16));
+      roads.get(node.backwardItemUid) ?? prefabs.get(node.backwardItemUid);
     if (
       !forwardItem &&
       edges.forward.length === 0 &&
       edges.backward.length > 0
     ) {
       const backwardEdges = edges.backward.filter(edge => {
-        const node = graph.get(edge.nodeId);
+        const node = graph.get(edge.nodeUid);
         if (!node) {
           return false;
         }
         return [...node.forward, ...node.backward].some(
-          returnEdge => returnEdge.nodeId === nodeId,
+          returnEdge => returnEdge.nodeUid === nodeId,
         );
       });
       for (const edge of backwardEdges) {
@@ -212,12 +217,12 @@ export function generateGraph(tsMapData: MappedData) {
       edges.forward.length > 0
     ) {
       const forwardEdges = edges.forward.filter(edge => {
-        const node = graph.get(edge.nodeId);
+        const node = graph.get(edge.nodeUid);
         if (!node) {
           return false;
         }
         return [...node.forward, ...node.backward].some(
-          returnEdge => returnEdge.nodeId === nodeId,
+          returnEdge => returnEdge.nodeUid === nodeId,
         );
       });
       for (const edge of forwardEdges) {
@@ -231,27 +236,37 @@ export function generateGraph(tsMapData: MappedData) {
   // sorta-fix unconnected companies (i.e., company nodes that haven't been connected to a prefab node
   // in prior graph-building steps).
   for (const prefab of unconnectedCompanyPrefabs) {
-    const company = assertExists(
-      companiesByPrefabItemId.get(prefab.uid.toString(16)),
-    );
-    const companyNode = assertExists(nodes.get(company.nodeUid.toString(16)));
-    assert(!graph.has(companyNode.uid.toString(16)));
+    const company = assertExists(companiesByPrefabItemId.get(prefab.uid));
+    const companyNode = assertExists(nodes.get(company.nodeUid));
+    assert(!graph.has(companyNode.uid));
     // at ths point, companyNodeUid is completely absent in the graph.
     // link the company node to the closest node already in the graph.
     const nodesInSectorRange = getObjectsInSectorRange(
       companyNode,
       nodesBySector,
     );
-    const closest = nodesInSectorRange
+    let closest = nodesInSectorRange
       .sort((a, b) => distance(a, companyNode) - distance(b, companyNode))
       .find(n => n.uid !== companyNode.uid);
     if (!closest) {
       logger.error('no eligible nodes for', company.token, company.cityToken);
       throw new Error();
     }
-    if (!graph.has(closest.uid.toString(16))) {
-      continue;
+    const closestInGraph = nodesInSectorRange
+      .sort((a, b) => distance(a, companyNode) - distance(b, companyNode))
+      .find(n => n.uid !== companyNode.uid && graph.has(n.uid));
+    if (closestInGraph && closest.uid !== closestInGraph.uid) {
+      logger.warn(
+        `${company.cityToken}.${company.token} ${company.uid.toString(16)}:`,
+        `graph does not contain entry for node ${closest.uid.toString(16)};`,
+        `using ${closestInGraph.uid.toString(16)} instead.`,
+        distance(closest, companyNode),
+        'vs',
+        distance(closestInGraph, companyNode),
+      );
+      closest = closestInGraph;
     }
+    assert(graph.has(closest.uid));
     //logger.info(
     //  'hacked connection',
     //  Number(dist.toFixed(3)),
@@ -260,7 +275,7 @@ export function generateGraph(tsMapData: MappedData) {
     //  closest.uid.toString(16),
     //);
     // establish edges from company node to closest node
-    graph.set(companyNode.uid.toString(16), {
+    graph.set(companyNode.uid, {
       forward: [
         createNeighbor(companyNode, closest, 'forward', getDlcGuard),
         createNeighbor(companyNode, closest, 'backward', getDlcGuard),
@@ -268,7 +283,7 @@ export function generateGraph(tsMapData: MappedData) {
       backward: [],
     });
     // establish edges from closest node to company node
-    const neighbors = graph.get(closest.uid.toString(16))!;
+    const neighbors = graph.get(closest.uid)!;
     neighbors.forward.push(
       createNeighbor(closest, companyNode, 'forward', getDlcGuard),
       createNeighbor(closest, companyNode, 'backward', getDlcGuard),
@@ -286,10 +301,10 @@ export function generateGraph(tsMapData: MappedData) {
   // edge that says we _can_ exit.
   // TODO write a general solution and search for all prefab intersections that lead into
   // a company prefab one-way, then add fudged edges (similar to the dead-end fudging earlier).
-  if (map === 'usa' && graph.has('3301e888d4055f5e')) {
-    const hackNeighbors = assertExists(graph.get('3301e888d4055f5e'));
+  if (map === 'usa' && graph.has(0x3301e888d4055f5en)) {
+    const hackNeighbors = assertExists(graph.get(0x3301e888d4055f5en));
     hackNeighbors.forward.push({
-      nodeId: '3301e888b6855e83',
+      nodeUid: 0x3301e888b6855e83n,
       distance: 32,
       direction: 'forward',
       dlcGuard: 13, // The DLC Guard value for Colorado, which is where Lamar is.
@@ -299,10 +314,9 @@ export function generateGraph(tsMapData: MappedData) {
   logger.info(
     graph.size,
     'nodes,',
-    [...graph.values()].reduce(
-      (acc, ns) => acc + ns.forward.length + ns.backward.length,
-      0,
-    ),
+    graph
+      .values()
+      .reduce((acc, ns) => acc + ns.forward.length + ns.backward.length, 0),
     'edges',
   );
 
@@ -315,7 +329,7 @@ export function generateGraph(tsMapData: MappedData) {
 
 function updateGraphWithFerries(
   graph: Map<
-    string,
+    bigint,
     {
       forward: Neighbor[];
       backward: Neighbor[];
@@ -328,18 +342,18 @@ function updateGraphWithFerries(
   const roadQuadtree = quadtree<{
     x: number;
     y: number;
-    nodeUid: string;
+    nodeUid: bigint;
   }>()
     .x(e => e.x)
     .y(e => e.y);
 
   const maybeAddNode = (nid: bigint) => {
-    const maybeNode = nodes.get(nid.toString(16));
+    const maybeNode = nodes.get(nid);
     if (maybeNode) {
       roadQuadtree.add({
         x: maybeNode.x,
         y: maybeNode.y,
-        nodeUid: nid.toString(16),
+        nodeUid: nid,
       });
     }
   };
@@ -353,14 +367,10 @@ function updateGraphWithFerries(
     //   "token": "14004"
     //   "path": "prefab2/fork_temp/invis/invis_r1_fork_tmpl.ppd"
     // (navCurves data has empty nextLines and prevLines arrays)
-    if (
-      context.map === 'europe' &&
-      prefab.uid.toString(16) === '4cd14de4b6e67ccf'
-    ) {
+    if (context.map === 'europe' && prefab.uid === 0x4cd14de4b6e67ccfn) {
       continue;
     }
-    const desc = prefabDescriptions.get(prefab.token);
-    if (!desc) continue;
+    const desc = assertExists(prefabDescriptions.get(prefab.token));
     if (
       desc.mapPoints.every(p => p.type === 'road') &&
       desc.navCurves.length > 0
@@ -372,7 +382,7 @@ function updateGraphWithFerries(
   }
 
   for (const ferry of ferries.values()) {
-    const ferryNodeUid = ferry.nodeUid.toString(16);
+    const ferryNodeUid = ferry.nodeUid;
     const ferryNode = assertExists(nodes.get(ferryNodeUid));
     const road = assertExists(roadQuadtree.find(ferry.x, ferry.y));
 
@@ -382,11 +392,9 @@ function updateGraphWithFerries(
       createNeighbor(road, ferryNode, 'forward', getDlcGuard),
       createNeighbor(road, ferryNode, 'backward', getDlcGuard),
     ];
-    const roadNeighbors = graph.get(road.nodeUid);
-    if (roadNeighbors) {
-      roadNeighbors.forward.push(...roadToFerryEdges);
-      roadNeighbors.backward.push(...roadToFerryEdges);
-    }
+    const roadNeighbors = assertExists(graph.get(road.nodeUid));
+    roadNeighbors.forward.push(...roadToFerryEdges);
+    roadNeighbors.backward.push(...roadToFerryEdges);
 
     assert(graph.get(ferryNodeUid) == null);
     graph.set(ferryNodeUid, { forward: [], backward: [] });
@@ -401,7 +409,7 @@ function updateGraphWithFerries(
     ferryNeighbors.backward.push(...ferryToRoadEdges);
 
     for (const connection of ferry.connections) {
-      const otherFerryNodeUid = connection.nodeUid.toString(16);
+      const otherFerryNodeUid = connection.nodeUid;
       const otherFerryNode = assertExists(nodes.get(otherFerryNodeUid));
       // establish edges from origin ferry to destination ferry
       const ferryToFerryEdges: readonly Neighbor[] = [
@@ -429,10 +437,10 @@ function getNeighborsInDirection(
 ): Neighbor[] {
   const getNeighborItemId = (n: Node) =>
     direction === 'forward' ? n.forwardItemUid : n.backwardItemUid;
-  const getItem = (id: string | bigint) =>
-    context.roads.get(id.toString(16)) ??
-    context.prefabs.get(id.toString(16)) ??
-    context.companies.get(id.toString(16));
+  const getItem = (id: bigint) =>
+    context.roads.get(id) ??
+    context.prefabs.get(id) ??
+    context.companies.get(id);
   const item = getItem(getNeighborItemId(node));
   if (!item) {
     // unknown neighbor item, e.g., a hidden or unknown road not present in context.
@@ -451,7 +459,7 @@ function getNeighborsInDirection(
       options.distance ?? distance([nextNode.x, nextNode.y], [node.x, node.y]);
     const dir = options.direction ?? direction;
     return {
-      nodeId: nextNode.uid.toString(16),
+      nodeUid: nextNode.uid,
       distance: dist,
       direction: dir,
       isOneLaneRoad: options.isOneLaneRoad,
@@ -466,10 +474,7 @@ function getNeighborsInDirection(
       const destNodeId =
         direction === 'forward' ? item.endNodeUid : item.startNodeUid;
 
-      if (originNodeId !== node.uid) {
-        return [];
-      }
-
+      assert(originNodeId === node.uid);
       const roadLook = assertExists(context.roadLooks.get(item.roadLookToken));
       const lanesInDirection =
         direction === 'forward'
@@ -480,10 +485,7 @@ function getNeighborsInDirection(
         return [];
       }
 
-      const nextNode = context.nodes.get(destNodeId.toString(16));
-      if (nextNode === undefined) {
-        return [];
-      }
+      const nextNode = assertExists(context.nodes.get(destNodeId));
       return [
         toNeighbor(nextNode, {
           distance: item.length,
@@ -493,20 +495,15 @@ function getNeighborsInDirection(
     }
     case ItemType.Prefab: {
       const neighbors: Neighbor[] = [];
-      const companyItem = context.companiesByPrefabItemId.get(
-        item.uid.toString(16),
-      );
+      const companyItem = context.companiesByPrefabItemId.get(item.uid);
       if (companyItem) {
-        const nextNode = assertExists(
-          context.nodes.get(companyItem.nodeUid.toString(16)),
-        );
+        const nextNode = assertExists(context.nodes.get(companyItem.nodeUid));
         neighbors.push(toNeighbor(nextNode));
       }
 
-      const connectionIndices = context.prefabConnections.get(item.token);
-      if (connectionIndices == undefined) {
-        return neighbors;
-      }
+      const connectionIndices = assertExists(
+        context.prefabConnections.get(item.token),
+      );
       if (!connectionIndices.size) {
         // prefab has no internal roads connecting its nodes,
         // e.g., in company depots.
@@ -523,9 +520,7 @@ function getNeighborsInDirection(
         // no connections for `node` in `direction` means that the prefab is one-way
         return neighbors;
       }
-      if (connections.length === 0) {
-        return neighbors;
-      }
+      assert(connections.length > 0);
       return [
         ...neighbors,
         // TODO calculate lengths based on navCurves
@@ -543,7 +538,7 @@ function getNeighborsInDirection(
     }
     case ItemType.Company: {
       assert(direction === 'forward');
-      const prefab = context.prefabs.get(item.prefabUid.toString(16));
+      const prefab = context.prefabs.get(item.prefabUid);
       if (!prefab) {
         // logger.warn(
         //   'unknown prefab',
@@ -556,12 +551,11 @@ function getNeighborsInDirection(
         return [];
       }
       const prefabNodes = prefab.nodeUids
-        .map(id => assertExists(context.nodes.get(id.toString(16))))
+        .map(id => assertExists(context.nodes.get(id)))
         .filter(
           node =>
             !(
-              node.forwardItemUid === prefab.uid &&
-              node.backwardItemUid.toString(16) === '0'
+              node.forwardItemUid === prefab.uid && node.backwardItemUid === 0n
             ),
         );
       return prefabNodes.flatMap(nextNode => [
@@ -577,22 +571,17 @@ function getNeighborsInDirection(
 function convertToNodeMap(
   connectionIndices: Map<number, number[]>,
   item: Prefab,
-  nodes: ReadonlyMap<string, Node>,
+  nodes: ReadonlyMap<bigint, Node>,
 ): Map<Node, Node[]> {
   const nodeMap = new Map<Node, Node[]>();
   const destinationNodes = rotateRight(
-    item.nodeUids.map(id => nodes.get(id.toString(16))),
+    item.nodeUids.map(id => nodes.get(id)),
     item.originNodeIndex,
   );
   for (const [nodeIdx, cnxIdxs] of connectionIndices) {
-    if (destinationNodes[nodeIdx] === undefined) {
-      continue;
-    }
     nodeMap.set(
       assertExists(destinationNodes[nodeIdx]),
-      cnxIdxs
-        .filter(idx => destinationNodes[idx] !== undefined)
-        .map(idx => assertExists(destinationNodes[idx])),
+      cnxIdxs.map(idx => assertExists(destinationNodes[idx])),
     );
   }
 
@@ -615,24 +604,21 @@ function createNeighbor(
   getDlcGuard: (n: Node) => number,
 ): Neighbor {
   return {
-    nodeId: toNode.uid.toString(16),
+    nodeUid: toNode.uid,
     distance: distance(from, toNode),
     direction,
     dlcGuard: getDlcGuard(toNode),
   };
 }
 
-function toSectorKey(o: { sectorX: number; sectorY: number }) {
-  return `${o.sectorX},${o.sectorY}`;
-}
-
 function getObjectsInSectorRange<T>(
-  sectorKey: { sectorX: number; sectorY: number },
+  pos: { x: number; y: number },
   objectsBySector: Map<string, T[]>,
 ): T[] {
-  const toKey = (sectorX: number, sectorY: number) =>
-    toSectorKey({ sectorX, sectorY });
-  const { sectorX: sx, sectorY: sy } = sectorKey;
+  const toKey = (x: number, y: number) => `${x},${y}`;
+  let { x: sx, y: sy } = pos;
+  sx = Math.floor(sx / 4000);
+  sy = Math.floor(sy / 4000);
   return [
     ...(objectsBySector.get(toKey(sx - 1, sy - 1)) ?? []),
     ...(objectsBySector.get(toKey(sx + 0, sy - 1)) ?? []),

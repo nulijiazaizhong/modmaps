@@ -14,6 +14,7 @@ import type {
   FacilityIcon,
   NonFacilityPoi,
   RoadType,
+  TrafficProperties,
 } from '@truckermudgeon/map/types';
 import type {
   ExpressionSpecification,
@@ -46,12 +47,19 @@ export const enum MapIcon {
   CityNames,
   Company,
   RoadNumber,
+  Roadwork,
+  RailCrossing,
 }
 export const allIcons: ReadonlySet<MapIcon> = new Set<MapIcon>(
-  Array.from({ length: 17 }, (_, i) => i as MapIcon),
+  Array.from({ length: 19 }, (_, i) => i as MapIcon),
 );
 
 export type GameMapStyleProps = {
+  /**
+   * URL where .pmtiles are stored, without the trailing `/`, e.g.,
+   * `https://truckermudgeon.github.io`
+   */
+  tileRootUrl: string;
   /** Defaults to all MapIcons */
   visibleIcons?: ReadonlySet<MapIcon>;
   /** Defaults to true */
@@ -74,6 +82,7 @@ export type GameMapStyleProps = {
 export const GameMapStyle = (props: GameMapStyleProps) => {
   const {
     game,
+    tileRootUrl,
     visibleIcons = allIcons,
     enableIconAutoHide = true,
     mode = 'light',
@@ -87,7 +96,11 @@ export const GameMapStyle = (props: GameMapStyleProps) => {
   return (
     // N.B.: {ats,ets2}.pmtiles each have one layer named 'ats' or 'ets2'
     // (layer names are set when running tippecanoe).
-    <Source id={game} type={'vector'} url={`pmtiles:///${game}.pmtiles`}>
+    <Source
+      id={game}
+      type={'vector'}
+      url={`pmtiles://${tileRootUrl}/${game}.pmtiles`}
+    >
       <Layer
         id={game + 'mapAreas'}
         source-layer={game}
@@ -128,7 +141,12 @@ export const GameMapStyle = (props: GameMapStyleProps) => {
           'fill-color': mapAreaColor(mode),
         }}
       />
-      <FootprintsSource game={game} mode={mode} color={colors.footprint} />
+      <FootprintsSource
+        game={game}
+        tileRootUrl={tileRootUrl}
+        mode={mode}
+        color={colors.footprint}
+      />
       <Layer
         id={game + 'hidden-roads'}
         source-layer={game}
@@ -623,23 +641,51 @@ export const GameMapStyle = (props: GameMapStyleProps) => {
             paint={colors.primaryTextPaint}
           />
         )}
+      {(visibleIcons.has(MapIcon.Roadwork) ||
+        visibleIcons.has(MapIcon.RailCrossing)) && (
+        <Layer
+          id={game + 'traffic-icons'}
+          source-layer={game}
+          type={'symbol'}
+          minzoom={enableIconAutoHide ? 6 : 0}
+          filter={[
+            'all',
+            ['==', ['geometry-type'], 'Point'],
+            ['==', ['get', 'type'], 'traffic'],
+            createTrafficFilter(visibleIcons),
+            dlcGuardFilter,
+          ]}
+          layout={iconLayout(
+            enableIconAutoHide,
+            0.6 * 0.5,
+            1.25 * 0.5,
+            2.5 * 0.5,
+            {
+              vertical: 2,
+              horizontal: 2,
+            },
+          )}
+        />
+      )}
     </Source>
   );
 };
 
 const FootprintsSource = ({
   game,
+  tileRootUrl,
   color,
   mode,
 }: {
   game: 'ats' | 'ets2';
+  tileRootUrl: string;
   color: string;
   mode: Mode;
 }) => (
   <Source
     id={game + 'footprints'}
     type={'vector'}
-    url={`pmtiles:///${game}-footprints.pmtiles`}
+    url={`pmtiles://${tileRootUrl}/${game}-footprints.pmtiles`}
   >
     <Layer
       id={game + 'footprints'}
@@ -721,7 +767,7 @@ const cityIconImage: ExpressionSpecification = [
   '',
 ];
 
-const mapIcons = [
+const poiMapIcons = [
   MapIcon.PhotoSight,
   MapIcon.Viewpoint,
   MapIcon.Port,
@@ -738,6 +784,8 @@ const mapIcons = [
   MapIcon.BorderCheck,
 ];
 
+export const trafficMapIcons = [MapIcon.Roadwork, MapIcon.RailCrossing];
+
 type RoadFacilityIcon = 'weigh_ico' | 'toll_ico' | 'agri_check' | 'border_ico';
 const allRoadFacilityIcons: readonly RoadFacilityIcon[] = [
   'weigh_ico',
@@ -747,7 +795,31 @@ const allRoadFacilityIcons: readonly RoadFacilityIcon[] = [
 ];
 
 function hasPois(icons: ReadonlySet<MapIcon>): boolean {
-  return mapIcons.some(icon => icons.has(icon));
+  return poiMapIcons.some(icon => icons.has(icon));
+}
+
+function hasTraffics(icons: ReadonlySet<MapIcon>): boolean {
+  return trafficMapIcons.some(icon => icons.has(icon));
+}
+
+function createTrafficFilter(
+  visibleIcons: ReadonlySet<MapIcon>,
+): ExpressionSpecification {
+  Preconditions.checkArgument(hasTraffics(visibleIcons));
+
+  const trafficSprites: TrafficProperties['sprite'][] = [];
+  if (visibleIcons.has(MapIcon.Roadwork)) {
+    trafficSprites.push('roadwork');
+  }
+  if (visibleIcons.has(MapIcon.RailCrossing)) {
+    trafficSprites.push('railcrossing');
+  }
+  const trafficPredicate: ExpressionSpecification | false =
+    trafficSprites.length > 0
+      ? ['in', ['get', 'sprite'], ['literal', trafficSprites]]
+      : false;
+
+  return ['any', trafficPredicate];
 }
 
 function createPoiFilter(

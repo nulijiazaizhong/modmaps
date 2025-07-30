@@ -1,6 +1,7 @@
 import type { Poi } from '@truckermudgeon/map/types';
 import fs from 'fs';
-import Jimp from 'jimp';
+import type { JimpInstance } from 'jimp';
+import { Jimp } from 'jimp';
 import * as os from 'node:os';
 import path from 'path';
 import Spritesmith from 'spritesmith';
@@ -70,14 +71,14 @@ async function preprocessPngs(pngPaths: string[]): Promise<{
   const bordered = new Set<string>();
   await Promise.all(
     pngPaths.map(async pngPath => {
-      const image = await Jimp.read(pngPath);
+      const image: JimpInstance = (await Jimp.read(pngPath)) as JimpInstance;
       const basename = path.basename(pngPath);
       let modified = false;
       const probablyRoadShield =
-        image.getWidth() === image.getHeight() && image.getWidth() >= 64;
+        image.width === image.height && image.width >= 64;
       // probably an over-sized road shield, like the colorado ones.
-      if (probablyRoadShield && image.getWidth() > 64) {
-        image.resize(64, 64);
+      if (probablyRoadShield && image.width > 64) {
+        image.resize({ w: 64, h: 64 });
         shrank.add(basename.replace('.png', ''));
         modified = true;
       }
@@ -89,7 +90,7 @@ async function preprocessPngs(pngPaths: string[]): Promise<{
 
       if (modified) {
         const tmpFilePath = path.join(os.tmpdir(), basename);
-        await image.writeAsync(tmpFilePath);
+        await image.write(tmpFilePath as `${string}.png`);
         allPngs.push(tmpFilePath);
         preprocessedPngs.push(tmpFilePath);
       } else {
@@ -142,16 +143,22 @@ function isProbablyWhiteFill({
   );
 }
 
-function addBorder(image: Jimp) {
+function addBorder(image: JimpInstance) {
   const original = image.clone();
   const mask = image.clone();
 
   // create a black mask by blacking out all of `image`'s pixels...
-  mask.scan(0, 0, mask.bitmap.width, mask.bitmap.height, (_x, _y, i) => {
-    mask.bitmap.data[i] = 0x00;
-    mask.bitmap.data[i + 1] = 0x00;
-    mask.bitmap.data[i + 2] = 0x00;
-  });
+  mask.scan(
+    0,
+    0,
+    mask.bitmap.width,
+    mask.bitmap.height,
+    (_x: number, _y: number, i: number) => {
+      mask.bitmap.data[i] = 0x00;
+      mask.bitmap.data[i + 1] = 0x00;
+      mask.bitmap.data[i + 2] = 0x00;
+    },
+  );
   // ...and "expand" it by blitting it in a one-pixel ring around its origin
   // (this yields better results than simply enlarging it by 1-2 pixels).
   for (let x = -1; x <= 1; x++) {
@@ -161,7 +168,7 @@ function addBorder(image: Jimp) {
   }
 
   // slightly shrink the original image...
-  original.resize(image.getWidth() - 2, image.getHeight() - 2);
+  original.resize({ w: image.width - 2, h: image.height - 2 });
   // ...and blit it on top of the mask.
   image.composite(original, 1, 1);
 }

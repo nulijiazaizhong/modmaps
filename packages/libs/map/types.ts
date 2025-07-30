@@ -183,7 +183,7 @@ export type Poi = LabeledPoi | UnlabeledPoi;
 export type Achievement = Readonly<
   | {
       type: 'visitCityData';
-      cities?: readonly string[];
+      cities: readonly string[];
     }
   | {
       type: 'delivery';
@@ -216,12 +216,18 @@ export type Achievement = Readonly<
       param: string;
       count: number;
     }
-  | {
+  | ({
       type: 'ferryData';
-      endpointA: string;
-      endpointB: string;
-      ferryType: 'all' | 'ferry' | 'train';
-    }
+    } & (
+      | {
+          ferryType: 'all';
+          endpointA: string;
+          endpointB: string;
+        }
+      | {
+          ferryType: 'ferry' | 'train';
+        }
+    ))
   | {
       type: 'eachDeliveryPoint';
       sources: string[]; // e.g., .id_snake_riv.kennewick.lewiston.source
@@ -544,6 +550,8 @@ export interface ModelDescription {
 
 export type WithToken<T> = T & { token: string };
 
+export type WithPath<T> = T & { path: string };
+
 export interface MapData extends DefData {
   nodes: Node[];
   elevation: [number, number, number][];
@@ -565,7 +573,7 @@ export interface DefData {
   countries: Country[];
   companyDefs: Company[];
   roadLooks: WithToken<RoadLook>[];
-  prefabDescriptions: WithToken<PrefabDescription>[];
+  prefabDescriptions: WithToken<WithPath<PrefabDescription>>[];
   modelDescriptions: WithToken<ModelDescription>[];
   achievements: WithToken<Achievement>[];
   routes: WithToken<Route>[];
@@ -588,8 +596,8 @@ export type RoadFeature = GeoJSON.Feature<
     dlcGuard: number;
     // an undefined startNodeUid is expected from roads converted from prefabs;
     // signifies that a prefab road isn't connected to a prefab entry/exit node.
-    startNodeUid: string | undefined;
-    endNodeUid: string | undefined;
+    startNodeUid: bigint | undefined;
+    endNodeUid: bigint | undefined;
   }
 > & { id: string; symbol?: string };
 
@@ -610,6 +618,8 @@ export type CityFeature = GeoJSON.Feature<GeoJSON.Point, CityProperties>;
 export type CountryFeature = GeoJSON.Feature<GeoJSON.Point, CountryProperties>;
 
 export type PoiFeature = GeoJSON.Feature<GeoJSON.Point, PoiProperties>;
+
+export type TrafficFeature = GeoJSON.Feature<GeoJSON.Point, TrafficProperties>;
 
 export type FootprintFeature = GeoJSON.Feature<
   GeoJSON.Polygon,
@@ -634,6 +644,7 @@ export type AtsMapGeoJsonFeature =
   | CityFeature
   | CountryFeature
   | PoiFeature
+  | TrafficFeature
   | FootprintFeature
   | ContourFeature
   | AchievementFeature
@@ -683,7 +694,7 @@ export interface MapAreaProperties {
 
 export interface DebugProperties {
   type: 'debug';
-  [k: string]: string;
+  [k: string]: unknown;
 }
 
 export interface CityProperties {
@@ -709,6 +720,13 @@ export interface PoiProperties {
   poiType: string; // Overlay, Viewpoint, Company, etc.
   poiName?: string; // POI label, if available
   dlcGuard?: number; // For dlc-guarded POIs, like road icons
+  prefabUid?: bigint;
+}
+
+export interface TrafficProperties {
+  type: 'traffic';
+  sprite: string;
+  dlcGuard: number;
 }
 
 export type ScopedCityFeature = GeoJSON.Feature<
@@ -737,7 +755,7 @@ export type ScopedCountryFeature = GeoJSON.Feature<
  */
 export interface Neighbor {
   /** The id of this Neighbor's node (not of the origin node). */
-  readonly nodeId: string; // hex form of a bigint
+  readonly nodeUid: bigint;
   /** The distance between the origin node and this Neighbor's node. */
   readonly distance: number;
   /** True if this Neighbor's edge represents a one-lane road. */
@@ -768,7 +786,7 @@ export type Neighbors = Readonly<{
 // Hacky, minimal versions of types needed for the fully-clientside "routes" demo page.
 
 export interface DemoNeighbor {
-  /** nodeId */
+  /** base36 node uid */
   n: string;
   /** distance */
   l: number;
@@ -786,7 +804,7 @@ export interface DemoNeighbors {
 }
 
 export interface DemoCompany {
-  /** node uid */
+  /** base36 node uid */
   n: string;
   /** token */
   t: string;
@@ -806,4 +824,118 @@ export interface DemoRoutesData {
   demoNodes: [string, [number, number]][];
   demoCompanies: DemoCompany[];
   demoCompanyDefs: DemoCompanyDef[];
+}
+
+// Other types
+
+/**
+ * Metadata attributes for a map label.
+ *
+ * All attributes are optional. When applying metadata to labels generated
+ * from mileage targets, an __undefined__ attribute (`null`) should cause
+ * that attribute to be undefined in the result as well, whereas a
+ * __missing__ attribute should cause the result to use the mileage target
+ * data for that particular attribute.
+ *
+ * @see https://github.com/nautofon/ats-towns/blob/main/label-metadata.md
+ */
+export interface LabelMeta {
+  // Meant for JSON, thus this interface must use null rather than undefined.
+
+  /**
+   * The token identifying the mileage target to apply the label attributes to.
+   *
+   * If missing or undefined, this object describes a new label instead.
+   */
+  token?: string | null;
+
+  /**
+   * The label text / feature name.
+   */
+  text?: string | null;
+
+  /**
+   * The adjusted easting, if any.
+   *
+   * Label metadata attributes use the terms easting and {@link southing} to
+   * refer to `x` / `y` coordinates. These more verbose terms avoid ambiguity
+   * of the coordinates' axis order and orientation. In the software project
+   * "Web-based maps for ATS and ETS2", only this interface {@link LabelMeta}
+   * and its implementers use these terms, in order to match the data files.
+   *
+   * The attributes easting and southing may be missing in metadata if the
+   * position read from mileage target data is already adequate.
+   */
+  easting?: number | null;
+
+  /**
+   * The adjusted southing, if any.
+   *
+   * @see {@link easting}
+   */
+  southing?: number | null;
+
+  /**
+   * The kind of location this label is for.
+   *
+   * Possible values include `city`, `town`, `unnamed`, and several others.
+   * Missing for most labels generated from new unassessed mileage targets;
+   * for such labels, the best value to assume as default is probably `town`.
+   *
+   * Label objects of the kind `unnamed` are not suitable for map display.
+   */
+  kind?: string | null;
+
+  /**
+   * Describes how the name is signed at a location in the game.
+   *
+   * Possible values are:
+   * - `all`:    Name well visible, no matter which direction you arrive from.
+   * - `most`:   Name visible when arriving from a clear majority of directions.
+   * - `some`:   Name visible in _some_ way, but it may not be very obvious.
+   * - `remote`: Name _not_ visible on site, but it appears on distance or
+   *             direction signs elsewhere.
+   */
+  signed?: 'all' | 'most' | 'some' | 'remote' | null;
+
+  /**
+   * True if a core part of the named location is accessible during regular
+   * gameplay.
+   */
+  access?: boolean | null;
+
+  /**
+   * True if the label is for a game location with deliverable industry, for
+   * example a scenery town with company depots (sometimes called a "suburb").
+   */
+  industry?: boolean | null;
+
+  /**
+   * The SCS token of the marked city this label can be proven to be associated
+   * with, if any.
+   */
+  city?: string | null;
+
+  /**
+   * The ISO 3166 code of the country / state / province the labeled feature
+   * is located in, for example `CZ` (Czechia) or `US-NV` (Nevada).
+   */
+  country?: string | null;
+
+  /**
+   * True (or missing) if it's recommended to show this label on the map
+   * by default. The value of this attribute is largely subjective.
+   */
+  show?: boolean | null;
+
+  /**
+   * The ISO 8601 date of the last time this location was checked in the game
+   * (usually `YYYY-MM`).
+   */
+  checked?: string | null;
+
+  /**
+   * Note or comment about the label or its attributes.
+   */
+  remark?: string | null;
 }

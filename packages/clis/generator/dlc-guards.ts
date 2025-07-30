@@ -11,7 +11,7 @@ import type { Node } from '@truckermudgeon/map/types';
 import type { Quadtree } from 'd3-quadtree';
 import { quadtree } from 'd3-quadtree';
 import { logger } from './logger';
-import type { MappedData } from './mapped-data';
+import type { MapDataKeys, MappedDataForKeys } from './mapped-data';
 
 interface QtDlcGuardEntry {
   x: number;
@@ -20,6 +20,18 @@ interface QtDlcGuardEntry {
 }
 
 export type DlcGuardQuadTree = Quadtree<QtDlcGuardEntry>;
+
+export const dlcGuardMapDataKeys = [
+  'nodes',
+  'roads',
+  'prefabs',
+  'mapAreas',
+  'triggers',
+  'cutscenes',
+  'pois',
+] satisfies MapDataKeys;
+
+export type DlcGuardMappedData = MappedDataForKeys<typeof dlcGuardMapDataKeys>;
 
 /**
  * Returns a copy of `tsMapData`, where the items in the collections have
@@ -31,9 +43,9 @@ export type DlcGuardQuadTree = Quadtree<QtDlcGuardEntry>;
  * case, 0-values are normalized based on the country IDs of the Nodes
  * associated with the item.
  */
-export function normalizeDlcGuards<T extends 'usa' | 'europe'>(
-  tsMapData: MappedData<T>,
-): MappedData<T> & { dlcGuardQuadTree?: DlcGuardQuadTree } {
+export function normalizeDlcGuards<T extends DlcGuardMappedData>(
+  tsMapData: T,
+): T & { dlcGuardQuadTree?: DlcGuardQuadTree } {
   const { map } = tsMapData;
   if (map === 'europe') {
     logger.error('ets2 dlc guard normalization is not yet supported.');
@@ -64,10 +76,14 @@ export function normalizeDlcGuards<T extends 'usa' | 'europe'>(
       unknownDlcGuards.add(dlcGuard);
       return;
     }
+    nodeUids = nodeUids.filter(nid => nodes.has(nid));
+    if (nodeUids.length === 0) {
+      return;
+    }
+
     if (dlcGuard !== 0) {
       for (const nid of nodeUids) {
-        const nidString = nid.toString(16);
-        const node = assertExists(nodes.get(nidString));
+        const node = assertExists(nodes.get(nid));
         dlcGuardQuadTree.add({
           x: node.x,
           y: node.y,
@@ -93,7 +109,7 @@ export function normalizeDlcGuards<T extends 'usa' | 'europe'>(
     if (mostReferencedEntries.length === 0) {
       // no non-zero country IDs. Fallback to the dlc guard associated with the
       // closest node.
-      const node = assertExists(nodes.get(nodeUids[0].toString(16)));
+      const node = assertExists(nodes.get(nodeUids[0]));
       const closestNode = dlcGuardQuadTree.find(node.x, node.y);
       return closestNode?.dlcGuard;
     }
@@ -107,8 +123,7 @@ export function normalizeDlcGuards<T extends 'usa' | 'europe'>(
     }
 
     for (const nid of nodeUids) {
-      const nidString = nid.toString(16);
-      const node = assertExists(nodes.get(nidString));
+      const node = assertExists(nodes.get(nid));
       dlcGuardQuadTree.add({
         x: node.x,
         y: node.y,
@@ -119,7 +134,7 @@ export function normalizeDlcGuards<T extends 'usa' | 'europe'>(
   };
 
   const updateMap = <T extends { dlcGuard: number }>(
-    map: Map<string, T>,
+    map: Map<bigint, T>,
     getNodeUids: (t: T) => readonly bigint[],
   ) => {
     for (const [key, t] of map) {
@@ -169,9 +184,9 @@ export function normalizeDlcGuards<T extends 'usa' | 'europe'>(
 
 function getCountryIds(
   nodeUid: bigint,
-  nodes: ReadonlyMap<string, Node>,
+  nodes: ReadonlyMap<bigint, Node>,
 ): number[] {
-  const node = assertExists(nodes.get(nodeUid.toString(16)));
+  const node = assertExists(nodes.get(nodeUid));
   const { forwardCountryId, backwardCountryId } = node;
   if (forwardCountryId !== backwardCountryId) {
     logger.warn('country mismatch', forwardCountryId, backwardCountryId);

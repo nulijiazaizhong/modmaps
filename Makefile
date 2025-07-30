@@ -38,9 +38,9 @@ MAP_FILES += $(GENERATOR_OUT_DIR)/world.pmtiles
 
 # Create ATS and ETS2 pmtiles files
 $(GENERATOR_OUT_DIR)/ats.pmtiles: $(ATS_PARSER_JSON_FILES)
-	npx generator map -m usa -i $(PARSER_OUT_DIR) -o $(GENERATOR_OUT_DIR)
+	npx generator map -h -m usa -i $(PARSER_OUT_DIR) -o $(GENERATOR_OUT_DIR)
 $(GENERATOR_OUT_DIR)/ets2.pmtiles: $(ETS2_PARSER_JSON_FILES)
-	npx generator map -m europe -i $(PARSER_OUT_DIR) -o $(GENERATOR_OUT_DIR)
+	npx generator map -h -m europe -i $(PARSER_OUT_DIR) -o $(GENERATOR_OUT_DIR)
 
 MAP_FILES += $(GENERATOR_OUT_DIR)/ats.pmtiles
 MAP_FILES += $(GENERATOR_OUT_DIR)/ets2.pmtiles
@@ -49,7 +49,7 @@ MAP_FILES += $(GENERATOR_OUT_DIR)/ets2.pmtiles
 # Create ATS and ETS2 footprints pmtiles files
 $(GENERATOR_OUT_DIR)/ats-footprints.pmtiles: $(ATS_PARSER_JSON_FILES)
 	npx generator footprints -m usa -i $(PARSER_OUT_DIR) -o $(GENERATOR_OUT_DIR)
-$(GENERATOR_OUT_DIR)/ets2-footprints.pmtiles: $(ATS_PARSER_JSON_FILES)
+$(GENERATOR_OUT_DIR)/ets2-footprints.pmtiles: $(ETS2_PARSER_JSON_FILES)
 	npx generator footprints -m europe -i $(PARSER_OUT_DIR) -o $(GENERATOR_OUT_DIR)
 
 MAP_FILES += $(GENERATOR_OUT_DIR)/ats-footprints.pmtiles
@@ -59,7 +59,7 @@ MAP_FILES += $(GENERATOR_OUT_DIR)/ets2-footprints.pmtiles
 # Create ATS and ETS2 contours (aka elevations) pmtiles files
 $(GENERATOR_OUT_DIR)/ats-contours.pmtiles: $(ATS_PARSER_JSON_FILES)
 	npx generator contours -m usa -i $(PARSER_OUT_DIR) -o $(GENERATOR_OUT_DIR)
-$(GENERATOR_OUT_DIR)/ets2-contours.pmtiles: $(ATS_PARSER_JSON_FILES)
+$(GENERATOR_OUT_DIR)/ets2-contours.pmtiles: $(ETS2_PARSER_JSON_FILES)
 	npx generator contours -m europe -i $(PARSER_OUT_DIR) -o $(GENERATOR_OUT_DIR)
 
 MAP_FILES += $(GENERATOR_OUT_DIR)/ats-contours.pmtiles
@@ -78,11 +78,25 @@ MAP_FILES += $(GENERATOR_OUT_DIR)/cities.geojson
 # Create ATS and ETS2 achievements.geojson files
 $(GENERATOR_OUT_DIR)/ats-achievements.geojson: $(ATS_PARSER_JSON_FILES)
 	npx generator achievements -m usa -i $(PARSER_OUT_DIR) -o $(GENERATOR_OUT_DIR)
-$(GENERATOR_OUT_DIR)/ets2-achievements.pmtiles: $(ATS_PARSER_JSON_FILES)
+$(GENERATOR_OUT_DIR)/ets2-achievements.geojson: $(ETS2_PARSER_JSON_FILES)
 	npx generator achievements -m europe -i $(PARSER_OUT_DIR) -o $(GENERATOR_OUT_DIR)
 
 MAP_FILES += $(GENERATOR_OUT_DIR)/ats-achievements.geojson
 MAP_FILES += $(GENERATOR_OUT_DIR)/ets2-achievements.geojson
+
+
+# Create ATS extra-labels.geojson file
+$(RESOURCES_DIR)/usa-labels-meta.json: \
+		$(RESOURCES_DIR)/extra-labels/script/csv2json.pl \
+		$(RESOURCES_DIR)/extra-labels/US \
+		$(RESOURCES_DIR)/extra-labels/US/*.csv
+	$(RESOURCES_DIR)/extra-labels/script/csv2json.pl \
+		$(RESOURCES_DIR)/extra-labels/US/*.csv \
+		-o $(RESOURCES_DIR)/usa-labels-meta.json
+$(GENERATOR_OUT_DIR)/extra-labels.geojson: $(ATS_PARSER_JSON_FILES) $(RESOURCES_DIR)/usa-labels-meta.json
+	npx generator extra-labels -m usa -i $(PARSER_OUT_DIR) -o $(GENERATOR_OUT_DIR)
+
+MAP_FILES += $(GENERATOR_OUT_DIR)/extra-labels.geojson
 
 
 # Create ETS2 villages.geojson file
@@ -114,7 +128,7 @@ MAP_FILES += $(GENERATOR_OUT_DIR)/usa-graph-demo.json
 # Create spritesheet files
 SPRITESHEET_FILES := $(addprefix $(GENERATOR_OUT_DIR)/,sprites.png sprites.json sprites@2x.png sprites@2x.json)
 $(SPRITESHEET_FILES): $(ATS_PARSER_JSON_FILES) $(ETS2_PARSER_JSON_FILES)
-	npx generator spritesheet -i $(PARSER_OUT_DIR) -o $(GENERATOR_OUT_DIR)
+	npx generator spritesheet -m usa -m europe -i $(PARSER_OUT_DIR) -o $(GENERATOR_OUT_DIR)
 
 MAP_FILES += $(SPRITESHEET_FILES)
 
@@ -144,6 +158,7 @@ clean: ## deletes all parser and generator outputs
 	@rm -f $(ATS_PARSER_JSON_FILES) $(ETS2_PARSER_JSON_FILES)
 	@rm -rf $(PARSER_OUT_DIR)/icons
 	@rm -f $(MAP_FILES)
+	@rm -f $(RESOURCES_DIR)/usa-labels-meta.json
 
 # generated `help` target
 # https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html

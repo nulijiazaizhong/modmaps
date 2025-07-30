@@ -113,8 +113,7 @@ export interface UnwrappedSiiCstNode extends CstNode {
 }
 
 export type UnwrappedSiiCstChildren = {
-  object?: ObjectCstNode[];
-  objectProperty?: ObjectPropertyCstNode[];
+  object: ObjectCstNode[];
 };
 
 export interface SiiCstNode extends CstNode {
