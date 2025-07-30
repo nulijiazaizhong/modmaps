@@ -5,8 +5,8 @@ import type { JimpInstance } from 'jimp';
 import { Jimp } from 'jimp';
 import os from 'node:os';
 import path from 'path';
-import Spritesmith from 'spritesmith';
 import type { Argv, BuilderArguments } from 'yargs';
+import { createSpritesheetWithJimp } from '../jimp-spritesheet';
 import { logger } from '../logger';
 import { readMapData } from '../mapped-data';
 import { maybeEnsureOutputDir, resourcesDir, untildify } from './path-helpers';
@@ -113,24 +113,9 @@ async function createSpritesheet(
   logger.log('preprocessing', origPngs.length, 'pngs...');
   const { allPngs, preprocessedPngs } = await preprocessPngs(origPngs);
   logger.log('arranging sprites...');
-  return new Promise<{
-    image: Buffer;
-    coordinates: Record<string, SpriteLocation>;
-  }>(resolve => {
-    Spritesmith.run(
-      { src: allPngs },
-      (_, { image, coordinates: coordsRaw, properties }) => {
-        logger.info('spritesheet size:', properties);
-        const coordinates = Object.entries(coordsRaw).reduce<
-          Record<string, SpriteLocation>
-        >((acc, [key, loc]) => {
-          acc[path.parse(key).name] = { ...loc, pixelRatio: 2 };
-          return acc;
-        }, {});
-        resolve({ image, coordinates });
-      },
-    );
-  }).finally(() => preprocessedPngs.forEach(png => fs.rmSync(png)));
+  const result = await createSpritesheetWithJimp(allPngs);
+  preprocessedPngs.forEach(png => fs.rmSync(png));
+  return result;
 }
 
 async function preprocessPngs(pngPaths: string[]): Promise<{
