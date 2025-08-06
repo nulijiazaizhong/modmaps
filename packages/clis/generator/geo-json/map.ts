@@ -673,8 +673,15 @@ function createTrafficFeatures(
 
     const pd = assertExists(prefabDescriptions.get(p.token));
     if (pd.path.includes('/roadwork/')) {
-      assert(p.nodeUids.length === 2);
-      const nodePoints = p.nodeUids.map(nid => assertExists(nodes.get(nid)));
+      if (p.nodeUids.length !== 2) {
+        continue;
+      }
+      const nodePoints = p.nodeUids
+        .map(nid => nodes.get(nid))
+        .filter(node => node !== undefined);
+      if (nodePoints.length !== 2) {
+        continue;
+      }
       features.push(
         turf.point(midPoint(nodePoints[0], nodePoints[1]), {
           type: 'traffic',
@@ -687,8 +694,15 @@ function createTrafficFeatures(
       (map === 'usa' && pd.path.includes('_xrail_')) ||
       (map === 'europe' && /[_/]rail\d_x_road/.test(pd.path))
     ) {
-      assert(p.nodeUids.length >= 4);
-      const nodePoints = p.nodeUids.map(nid => assertExists(nodes.get(nid)));
+      if (p.nodeUids.length < 4) {
+        continue;
+      }
+      const nodePoints = p.nodeUids
+        .map(nid => nodes.get(nid))
+        .filter(node => node !== undefined);
+      if (nodePoints.length < 4) {
+        continue;
+      }
       features.push(
         turf.point(center(getExtent(nodePoints)), {
           type: 'traffic',
