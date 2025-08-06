@@ -1,5 +1,4 @@
 import { putIfAbsent } from '@truckermudgeon/base/map';
-import { Preconditions } from '@truckermudgeon/base/precon';
 import fs from 'fs';
 import type { GeoJSON } from 'geojson';
 import path from 'path';
@@ -85,7 +84,10 @@ export function createIsoA2Map(): {
       if (isoA2s.has(gameCountryCode)) {
         return gameCountryCode;
       }
-      Preconditions.checkArgument(ets2IsoA2.has(gameCountryCode));
+      if (!ets2IsoA2.has(gameCountryCode)) {
+        // Return the original code if not found in mapping
+        return gameCountryCode;
+      }
       return ets2IsoA2.get(gameCountryCode)!;
     },
   };
