@@ -119,6 +119,10 @@ export function toRoadStringsAndPolygons(prefab: PrefabDescription): {
     visitedPoints.add(point);
     for (const i of point.neighbors) {
       const neighbor = prefab.mapPoints[i] as RoadMapPoint;
+      if (!neighbor) {
+        // Skip if neighbor doesn't exist (invalid index)
+        continue;
+      }
       if (visitedPoints.has(neighbor)) {
         continue;
       }
