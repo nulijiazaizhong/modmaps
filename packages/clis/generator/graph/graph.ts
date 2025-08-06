@@ -385,6 +385,10 @@ function updateGraphWithFerries(
     const ferryNodeUid = ferry.nodeUid;
     const ferryNode = assertExists(nodes.get(ferryNodeUid));
     const road = assertExists(roadQuadtree.find(ferry.x, ferry.y));
+    if (!graph.has(road.nodeUid)) {
+      // Skip ferry if closest road is not in graph
+      continue;
+    }
 
     // establish edges from closest road to ferry
     // TODO look into simplying graph by only having one direction to/from ferry
