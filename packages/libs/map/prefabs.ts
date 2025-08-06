@@ -573,13 +573,28 @@ export function toRoadStringsAndPolygons(prefab: PrefabDescription): {
     do {
       polygon.add(nextPoint);
       visitedPoints.add(nextPoint);
+
+      // Ensure neighbors exist and are valid
+      if (!nextPoint.neighbors || nextPoint.neighbors.length < 2) {
+        break;
+      }
+
       const [a, b] = nextPoint.neighbors.map(
         i => prefab.mapPoints[i],
       ) as PolygonMapPoint[];
+
+      // Ensure both neighbors exist
+      if (!a || !b) {
+        break;
+      }
+
       if (!polygon.has(a)) {
         nextPoint = a;
       } else if (!polygon.has(b)) {
         nextPoint = b;
+      } else {
+        // Both neighbors are already in the polygon, we're done with this polygon
+        break;
       }
     } while (!polygon.has(nextPoint));
     const [firstPoint] = polygon;
