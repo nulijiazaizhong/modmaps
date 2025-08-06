@@ -19,8 +19,6 @@ export enum AtsDlc {
   Utah,
   Washington,
   Wyoming,
-  // Mods
-  BritishColumbia,
 }
 export type AtsSelectableDlc = AtsDlc;
 export const AtsSelectableDlcs: ReadonlySet<AtsSelectableDlc> = new Set([
@@ -41,7 +39,6 @@ export const AtsSelectableDlcs: ReadonlySet<AtsSelectableDlc> = new Set([
   AtsDlc.Arkansas,
   AtsDlc.Missouri,
   AtsDlc.Iowa,
-  AtsDlc.BritishColumbia,
 ]);
 export const AtsDlcInfo: Record<AtsSelectableDlc, string> = {
   [AtsDlc.Nevada]: 'Nevada',
@@ -61,7 +58,6 @@ export const AtsDlcInfo: Record<AtsSelectableDlc, string> = {
   [AtsDlc.Arkansas]: 'Arkansas',
   [AtsDlc.Missouri]: 'Missouri',
   [AtsDlc.Iowa]: 'Iowa',
-  [AtsDlc.BritishColumbia]: 'British Columbia',
 };
 
 // from /def/country.sii
@@ -86,11 +82,9 @@ export enum AtsCountryId {
   Oklahoma = 36,
   Wyoming = 50,
   Missouri = 26,
-  // Mods
-  BritishColumbia = 202,
 }
 
-export type AtsDlcGuard = Range<0, 49>;
+export type AtsDlcGuard = Range<0, 47>;
 
 // key/vals based on dlc guards dropdown in map editor UI
 export const AtsDlcGuards: Record<AtsDlcGuard, ReadonlySet<AtsDlc>> = {
@@ -141,8 +135,6 @@ export const AtsDlcGuards: Record<AtsDlcGuard, ReadonlySet<AtsDlc>> = {
   44: new Set([AtsDlc.Iowa]),
   45: new Set([AtsDlc.Iowa, AtsDlc.Missouri]),
   46: new Set([AtsDlc.Iowa, AtsDlc.Nebraska]),
-  47: new Set([AtsDlc.BritishColumbia]),
-  48: new Set([AtsDlc.BritishColumbia, AtsDlc.Washington]),
 } as const;
 
 // values are based on matching singleton sets in `AtsDlcGuards` map, e.g.:
@@ -168,8 +160,6 @@ export const AtsCountryIdToDlcGuard: Record<AtsCountryId, AtsDlcGuard> = {
   [AtsCountryId.Arkansas]: 36,
   [AtsCountryId.Missouri]: 39,
   [AtsCountryId.Iowa]: 44,
-  // Mods
-  [AtsCountryId.BritishColumbia]: 47,
 };
 
 // sanity check to ensure values in record above refer to singleton sets.

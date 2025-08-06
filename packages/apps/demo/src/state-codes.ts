@@ -13,8 +13,6 @@ function toStateCode(atsDlc: AtsSelectableDlc): StateCode {
       return StateCode.AZ;
     case AtsDlc.Arkansas:
       return StateCode.AR;
-    case AtsDlc.BritishColumbia:
-      return StateCode.BC;
     case AtsDlc.Colorado:
       return StateCode.CO;
     case AtsDlc.Idaho:
